@@ -1,0 +1,10 @@
+Metadata-Version: 2.4
+Name: cube
+Version: 0.1.0
+Summary: Cube Decomposition Solver based on SMT
+Requires-Python: >=3.8
+Requires-Dist: z3-solver>=4.12.0
+Requires-Dist: pulp>=2.7.0
+Dynamic: requires-dist
+Dynamic: requires-python
+Dynamic: summary
