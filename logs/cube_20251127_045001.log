@@ -1,0 +1,23 @@
+2025-11-27 04:50:01|INFO   |cube:120            |setup_logger     | 日志文件: E:\vscode_workplace\cube\logs\cube_20251127_045001.log
+2025-11-27 04:50:01|INFO   |cube:399            |main             | ============================================================
+2025-11-27 04:50:01|INFO   |cube:400            |main             | Cube Decomposition Solver
+2025-11-27 04:50:01|INFO   |cube:401            |main             | ============================================================
+2025-11-27 04:50:01|DEBUG  |cube:408            |main             | Initial solver created with ID: 0
+2025-11-27 04:50:01|DEBUG  |cube:412            |main             | Optimizer initialized
+2025-11-27 04:50:01|INFO   |cube:415            |main             | 
+Starting recursive processing...
+2025-11-27 04:50:01|INFO   |cube:259            |process_solver   | ========================================
+2025-11-27 04:50:01|INFO   |cube:260            |process_solver   | [Depth 0] Processing solver (ID: 0)
+2025-11-27 04:50:01|INFO   |cube:261            |process_solver   | ========================================
+2025-11-27 04:50:01|INFO   |cube.smt:95         |log_assertions   | Solver 0 assertions:
+2025-11-27 04:50:01|INFO   |cube.smt:97         |log_assertions   |   [1] x6 > x5
+2025-11-27 04:50:01|INFO   |cube.smt:97         |log_assertions   |   [2] x5 > x4
+2025-11-27 04:50:01|INFO   |cube.smt:97         |log_assertions   |   [3] x4 > x3
+2025-11-27 04:50:01|INFO   |cube.smt:97         |log_assertions   |   [4] x3 > x2
+2025-11-27 04:50:01|INFO   |cube.smt:97         |log_assertions   |   [5] x2 > x1
+2025-11-27 04:50:01|INFO   |cube.smt:97         |log_assertions   |   [6] x1 > 0
+2025-11-27 04:50:01|INFO   |cube.smt:97         |log_assertions   |   [7] x6 == 2*x5
+2025-11-27 04:50:01|INFO   |cube.smt:97         |log_assertions   |   [8] x5 == 2*x4
+2025-11-27 04:50:01|INFO   |cube.smt:98         |log_assertions   | ----------------------------------------
+2025-11-27 04:51:45|INFO   |cube.smt:354        |decompose        | Solver 0 开始分解...
+2025-11-27 04:57:48|INFO   |cube.smt:358        |decompose        | Solver 0 分解完成: 生成 1 个Partitions, i_min=4

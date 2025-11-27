@@ -1,0 +1,61 @@
+2025-11-27 16:51:08 | INFO    | Constraint logger initialized: x6eq2mx5&x5eqx4px2
+2025-11-27 16:51:08 | INFO    |   main.log: E:\vscode_workplace\cube\logs\20251127_165108\x6eq2mx5&x5eqx4px2\main.log
+2025-11-27 16:51:08 | INFO    |   errors.log: E:\vscode_workplace\cube\logs\20251127_165108\x6eq2mx5&x5eqx4px2\errors.log
+2025-11-27 16:51:08 | INFO    | ================================================================================
+2025-11-27 16:51:08 | INFO    | Starting solve_constraints
+2025-11-27 16:51:08 | INFO    | Constraints: ['x6 == 2 * x5', 'x5 == x4 + x2']
+2025-11-27 16:51:08 | INFO    | n_max: 36, max_depth: 10
+2025-11-27 16:51:08 | INFO    | ================================================================================
+2025-11-27 16:51:08 | INFO    | Solver ID: x6eq2mx5&x5eqx4px2_0
+2025-11-27 16:51:08 | INFO    | Initial solver is satisfiable
+2025-11-27 16:51:08 | INFO    | Optimizer initialized with n_max=36
+2025-11-27 16:51:08 | INFO    | Starting recursive processing...
+2025-11-27 16:51:08 | DEBUG   | Solver logger initialized: x6eq2mx5&x5eqx4px2_0
+2025-11-27 16:51:08 | INFO    | Solver x6eq2mx5&x5eqx4px2_0 initialized
+2025-11-27 16:51:08 | INFO    | ========================================
+2025-11-27 16:51:08 | INFO    | Solver x6eq2mx5&x5eqx4px2_0 Assertions:
+2025-11-27 16:51:08 | INFO    | ========================================
+2025-11-27 16:51:08 | INFO    |   [1] x6 > x5
+2025-11-27 16:51:08 | INFO    |   [2] x5 > x4
+2025-11-27 16:51:08 | INFO    |   [3] x4 > x3
+2025-11-27 16:51:08 | INFO    |   [4] x3 > x2
+2025-11-27 16:51:08 | INFO    |   [5] x2 > x1
+2025-11-27 16:51:08 | INFO    |   [6] x1 > 0
+2025-11-27 16:51:08 | INFO    |   [7] x6 == 2*x5
+2025-11-27 16:51:08 | INFO    |   [8] x5 == x4 + x2
+2025-11-27 16:51:08 | INFO    | ========================================
+2025-11-27 16:51:08 | DEBUG   | Partition logger initialized: x6eq2mx5&x5eqx4px2_0.0
+2025-11-27 16:51:08 | INFO    | Partition x6eq2mx5&x5eqx4px2_0.0 initialized (i_min=4)
+2025-11-27 16:51:08 | INFO    | ========================================
+2025-11-27 16:51:08 | INFO    | Partition x6eq2mx5&x5eqx4px2_0.0 Solver Assertions:
+2025-11-27 16:51:08 | INFO    | ========================================
+2025-11-27 16:51:08 | INFO    |   [1] x6 > x5
+2025-11-27 16:51:08 | INFO    |   [2] x5 > x4
+2025-11-27 16:51:08 | INFO    |   [3] x4 > x3
+2025-11-27 16:51:08 | INFO    |   [4] x3 > x2
+2025-11-27 16:51:08 | INFO    |   [5] x2 > x1
+2025-11-27 16:51:08 | INFO    |   [6] x1 > 0
+2025-11-27 16:51:08 | INFO    |   [7] x6 == 2*x5
+2025-11-27 16:51:08 | INFO    |   [8] x5 == x4 + x2
+2025-11-27 16:51:08 | INFO    |   [9] And(Not(x6 - x4*3 > 0), Not(x6 == x4*3))
+2025-11-27 16:51:08 | INFO    | ========================================
+2025-11-27 16:51:08 | INFO    | ========================================
+2025-11-27 16:51:08 | INFO    | Partition x6eq2mx5&x5eqx4px2_0.0 Members (6 total):
+2025-11-27 16:51:08 | INFO    | ========================================
+2025-11-27 16:51:08 | INFO    |   [0] =: x6 == x5*2
+2025-11-27 16:51:08 | INFO    |   [1] >: x6 - (x5*1 + x4*1) > 0
+2025-11-27 16:51:08 | INFO    |   [2] >: x6 - x5*1 > 0
+2025-11-27 16:51:08 | INFO    |   [3] >: x6 - x4*2 > 0
+2025-11-27 16:51:08 | INFO    |   [4] >: x6 - x4*1 > 0
+2025-11-27 16:51:08 | INFO    |   [5] >: x6 - 0 > 0
+2025-11-27 16:51:08 | INFO    | ========================================
+2025-11-27 16:51:08 | ERROR   | ❌ Error in solve_constraints: nmax is 2, cannot extend further
+2025-11-27 16:51:08 | ERROR   | Traceback (most recent call last):
+  File "e:\vscode_workplace\cube\main.py", line 460, in solve
+    success_solvers = process_solver(
+        initial_solver, opt, depth=0, max_depth=max_depth, solver_id=solver_id
+    )
+  File "e:\vscode_workplace\cube\main.py", line 348, in process_solver
+    raise ValueError("nmax is 2, cannot extend further")
+ValueError: nmax is 2, cannot extend further
+

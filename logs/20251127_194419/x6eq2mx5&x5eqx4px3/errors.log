@@ -1,0 +1,12 @@
+19:44:19|CRITICAL| [Depth 0] Processing solver (ID: x6eq2mx5&x5eqx4px3_0)
+19:44:19|CRITICAL| Solver x6eq2mx5&x5eqx4px3_0 分解完成: 生成 3 个Partitions, i_min=4
+19:44:19|CRITICAL| ----------------------------------------
+19:44:19|CRITICAL| Partition [1/3] (ID: x6eq2mx5&x5eqx4px3_0.0, i_min=4)
+19:44:19|CRITICAL| ✂️ Pruned
+19:44:19|CRITICAL| ----------------------------------------
+19:44:19|CRITICAL| Partition [2/3] (ID: x6eq2mx5&x5eqx4px3_0.1, i_min=4)
+19:44:19|CRITICAL| ✂️ Pruned
+19:44:19|CRITICAL| ----------------------------------------
+19:44:19|CRITICAL| Partition [3/3] (ID: x6eq2mx5&x5eqx4px3_0.2, i_min=4)
+19:44:20|CRITICAL| ✂️ Pruned
+19:44:20|CRITICAL| Collected 0 success solver(s) at depth 0
