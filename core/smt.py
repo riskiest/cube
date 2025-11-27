@@ -7,12 +7,13 @@ SMT Solver 封装类：提供纯 SMT 求解功能，不涉及业务逻辑。
 - 可被 SMTAnalyzer、Partition 等类复用
 """
 
+import logging
 from typing import List, Dict, Optional, Any, Tuple, Union
 from z3 import (Solver, BoolRef, ArithRef, sat, unsat, unknown, BoolVal,
                 And, Not, substitute, simplify, Real, Reals, RealVal)
 from copy import deepcopy
 from itertools import product
-from .logger import get_logger
+from core.logger import get_sp_logger, get_logger
 
 # 获取模块级 logger
 logger = get_logger("smt")
@@ -82,20 +83,96 @@ class SMTSolver:
             #     logger.error(f"添加 text_constraints 失败: {e}")
             #     raise ValueError(f"SMTSolver 初始化失败：无法添加 text_constraints。错误: {e}")
     
-    def set_id(self, id: str):
-        """设置求解器的标识符"""
-        self.id = id
+    @staticmethod
+    def constraints_to_id(text_constraints: List[str]) -> str:
+        """
+        将约束列表转换为可读的 ID（适合作为文件名）。
+        
+        规则：
+        1. 移除空格
+        2. == → eq, > → gt, >= → ge, < → lt, <= → le, != → ne
+        3. * → m (multiply), + → p (plus), - → s (minus)
+        4. 多个约束用 & 连接
+        5. 限制总长度（避免文件名过长）
+        
+        示例：
+            ["x6 == 2*x5"] → "x6eq2mx5"
+            ["x6 == x5 + x3", "x5 == x3 + x2"] → "x6eqx5px3&x5eqx3px2"
+            ["x6 > 2*x5 + 3*x4"] → "x6gt2mx5p3mx4"
+        
+        参数:
+            text_constraints: 约束字符串列表
+        
+        返回:
+            格式化的 ID 字符串
+        """
+        if not text_constraints:
+            return "empty"
+        
+        formatted_parts = []
+        
+        for constraint in text_constraints:
+            # 移除所有空格
+            c = constraint.replace(" ", "")
+            
+            # 替换运算符
+            c = c.replace("==", "eq")
+            c = c.replace(">=", "ge")
+            c = c.replace("<=", "le")
+            c = c.replace("!=", "ne")
+            c = c.replace(">", "gt")
+            c = c.replace("<", "lt")
+            c = c.replace("*", "m")
+            c = c.replace("+", "p")
+            c = c.replace("-", "s")  # 注意：这会把负号也替换
+            
+            formatted_parts.append(c)
+        
+        # 用 & 连接多个约束
+        result = "&".join(formatted_parts)
+        
+        # 限制长度（避免文件名过长）
+        max_len = 100
+        if len(result) > max_len:
+            # 截断并添加哈希值
+            import hashlib
+            hash_suffix = hashlib.md5(result.encode()).hexdigest()[:8]
+            result = result[:max_len-9] + "_" + hash_suffix
+        
+        return result
 
+    def set_id(self, id: str):
+        """设置 solver ID 并创建专用日志"""
+        self.id = id
+        
+        # 创建 solver 专用日志
+        try:
+            # ✅ 获取 solver 专用 logger（自动记录到 3 个地方）
+            self._logger = get_sp_logger(id, "solver")
+            # self._logger.info(f"Solver {id} initialized")
+        except ValueError:
+            # 如果还没有设置约束，使用默认 logger
+            self._logger = get_logger()
+    
+    def get_logger(self) -> logging.Logger:
+        """获取 solver 的 logger"""
+        if not hasattr(self, '_logger') or self._logger is None:
+            self._logger = get_logger()
+        return self._logger
+    
     def assertions(self) -> List[BoolRef]:
         """返回当前求解器的所有约束列表"""
         return self.solver.assertions()
     
     def log_assertions(self):
-        """打印当前求解器的所有约束"""
-        logger.info(f"Solver {self.id} assertions:")
-        for i, assertion in enumerate(self.assertions(), 1):
-            logger.info(f"  [{i}] {assertion}")
-        logger.info('-'*40)
+        """记录所有约束到 solver 专用日志"""
+        logger = self.get_logger()
+        logger.info("=" * 40)
+        logger.info(f"Solver {self.id} Assertions:")
+        logger.info("=" * 40)
+        for idx, a in enumerate(self.assertions(), 1):
+            logger.info(f"  [{idx}] {a}")
+        logger.info("=" * 40)
     
     @staticmethod
     def get_var(name: str) -> Real:
@@ -351,11 +428,12 @@ class SMTSolver:
     # ==================== produce partitions ====================
     # @log_on_error()
     def decompose(self) -> tuple:
+        logger = self.get_logger()
         logger.info(f"Solver {self.id} 开始分解...")
         results, i_min = self._decompose()
         groups = self.classify(results, i_min)
         groups = self.produce_partitions(groups)
-        logger.info(f"Solver {self.id} 分解完成: 生成 {len(groups)} 个Partitions, i_min={i_min}")
+        logger.critical(f"Solver {self.id} 分解完成: 生成 {len(groups)} 个Partitions, i_min={i_min}")
         return groups, i_min
     
     def find_i_min(self) -> Optional[int]:
@@ -576,7 +654,7 @@ class SMTSolver:
         '''
         计算solver 一定蕴含着 LHS > n * x_{i-1} 与 LHS == n * x_{i-1} 的关系
         1. LHS > n * x_{i-1} 与 LHS == n * x_{i-1} 的蕴含关系可能同时成立
-        事实上，如果约束集蕴含着 LHS == n * x_{i-1} 成立，那么蕴含 LHS > (n-1) * x_{i-1} 也成立
+        实际上，如果约束集蕴含着 LHS == n * x_{i-1} 成立，那么蕴含 LHS > (n-1) * x_{i-1} 也成立
         2. 为了减少推理，首先在输入上排除了 LHS == 0 的情况， 因此 LHS > 0 * x_{i-1}
         假设LHS > n * x_{i-1}被蕴含，而 LHS > (n+1) * x_{i-1} 不被蕴含，
         则必有解在 (n+1) * x_{i-1} >= LHS > n * x_{i-1} 之间;

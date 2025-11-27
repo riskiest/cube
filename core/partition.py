@@ -1,8 +1,9 @@
+import logging
 from pprint import pprint
 # from typing import Dict, List, Optional, Tuple
 # from smt import SMTSolver
 # from itertools import combinations_with_replacement
-import jsonpickle
+# import jsonpickle
 import json
 from fractions import Fraction
 from typing import Any
@@ -17,7 +18,7 @@ from z3 import BoolRef, Real
 from itertools import combinations_with_replacement
 
 from .smt import SMTSolver  # 注意：使用相对导入
-from .logger import get_logger  # 导入 get_logger 函数
+from .logger import get_logger, get_sp_logger  # 导入 get_logger 函数
 from .hex2 import FractionFormatter  # 导入 Fraction 类
 
 from pprint import pprint
@@ -49,30 +50,52 @@ class Partition:
         self.id = id  # 可选的标识符
 
     def set_id(self, id: str):
-        """设置 Partition 的标识符"""
+        """设置 partition ID 并创建专用日志"""
         self.id = id
-
+        
+        # 创建 partition 专用日志
+        try:
+            self._logger = get_sp_logger(id, "partition")
+            # self._logger.info(f"Partition {id} initialized (i_min={self.i_min})")
+        except ValueError:
+            # 如果还没有设置约束，使用默认 logger
+            self._logger = get_logger()
+            # self._logger.debug(f"Partition {id} using default logger")
+    
+    def get_logger(self) -> logging.Logger:
+        """获取 partition 的 logger"""
+        if not hasattr(self, '_logger') or self._logger is None:
+            self._logger = get_logger()
+        return self._logger
+    
     def order(self) -> None:
         """按 LHS 表达式的字符串形式对 members 就地排序，便于阅读和调试。"""
         self.members.sort(key=lambda item: tuple([item["coeffs"][f"x{i}"] for i in range(5, self.i_min-1, -1)]), 
                               reverse=True)
 
     def log_assertions(self):
-        """打印当前求解器的所有约束"""
-        logger.info(f"Partition {self.id} solver assertions:")
-        for i, assertion in enumerate(self.solver.assertions(), 1):
-            logger.info(f"  [{i}] {assertion}")
-        logger.info('-'*40)
-
+        """记录约束到 partition 专用日志"""
+        logger = self.get_logger()
+        logger.info("=" * 40)
+        logger.info(f"Partition {self.id} Solver Assertions:")
+        logger.info("=" * 40)
+        for idx, a in enumerate(self.solver.assertions(), 1):
+            logger.info(f"  [{idx}] {a}")
+        logger.info("=" * 40)
+    
     def log_members(self) -> None:
-        """打印该 Partition 的每个 member 的表达式。"""     
-        logger.info(f"Partition {self.id}: expr with i_min = {self.i_min} :")
-        for i, member in enumerate(self.members, 1):
-            logger.info(f"  [{i}] {member['expr']}")
-        logger.info("-" * 40)
-
+        """记录所有 members 到 partition 专用日志"""     
+        logger = self.get_logger()
+        logger.info("=" * 40)
+        logger.info(f"Partition {self.id} Members ({len(self.members)} total):")
+        logger.info("=" * 40)
+        for idx, member in enumerate(self.members):
+            logger.info(f"  [{idx}] {member.get('relation', '?')}: {member.get('expr', '')}")
+        logger.info("=" * 40)
+    
     def log_LHS(self, n=1, Breakdown=True, DEBUG=False) -> None:
         """打印该 Partition 的每个 member 的 LHS 和对应的 n_LHS 分析结果。"""
+        logger = self.get_logger()
         logger.info(f"Partition {self.id}: When n = {n}, x_{self.i_min} > {n} * x_{self.i_min - 1} :")
         for i, member in enumerate(self.members, 1):
             LHS = member["LHS"]
@@ -167,6 +190,7 @@ class Partition:
     
     def log_structure(self) -> None:
         """输出结构到日志"""
+        logger = self.get_logger()
         logger.info("=" * 60)
         logger.info(f"Partition Structure (ID: {self.id})")
         logger.info("=" * 60)
@@ -178,6 +202,7 @@ class Partition:
     
     def save_to_file(self, filename: str) -> None:
         """保存到文件"""
+        logger = self.get_logger()
         with open(filename, 'w', encoding='utf-8') as f:
             f.write(self.to_json())
         logger.info(f"Saved to {filename}")
@@ -244,6 +269,7 @@ class Partition:
             List[BoolRef]: 所有生成的约束列表
         """
         all_constraints = []
+        logger = self.get_logger()
         
         xi = self.solver.vars.get(f"x{self.i_min}")
         xi_prev = self.solver.vars.get(f"x{self.i_min - 1}")
@@ -342,6 +368,7 @@ class Partition:
         # if self.solver is None:
         #     raise ValueError("Partition._solver 未初始化")
         
+        logger = self.get_logger()
         logger.info(f"Partition {self.id}: 开始过滤和去重 {len(constraints)} 个约束...")
         filtered_solvers: List[Solver] = []
         

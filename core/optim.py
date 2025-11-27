@@ -11,7 +11,7 @@ from .F import F  # 使用相对导入（同一包内）
 from .partition import Partition  # 使用相对导入
 from .logger import get_logger, log_on_error  # 导入 get_logger 函数
 from .smt import SMTSolver  # 导入 SMTSolver 类
-logger = get_logger("optim")
+# logger = get_logger("optim")
 
 __all__ = ['SMTSolver', 'Partition', 'F', 'Optimizer']
 
@@ -51,7 +51,7 @@ class Optimizer:
         #     return 0
         return comb(n + i, i - 1)
 
-    def get_f_1(self, partition: Partition) -> List:
+    def get_f_1(self, p: Partition) -> List:
         """
         对i_min = 1的Partition 计算f值，并输出到日志
         
@@ -78,11 +78,11 @@ class Optimizer:
         """
         # if partition.i_min is None or partition.i_min <= 1:
         #     return []
-        
+        logger = p.get_logger()
         # i = partition.i_min - 1
         fs = []
         
-        for idx, member in enumerate(partition.members):
+        for idx, member in enumerate(p.members):
             if member['relation'] != '=':
                 continue
             
@@ -270,7 +270,7 @@ class Optimizer:
     
     def process_partition(
         self, 
-        partition: Partition, 
+        p: Partition, 
         n: int = 1, 
         Breakdown: bool = True
     ) -> None:
@@ -290,18 +290,18 @@ class Optimizer:
         返回:
             None（结果写入 partition.members）
         """
-        i = partition.i_min - 1
-        
+        i = p.i_min - 1
+        # logger = p.get_logger()
         # logger.info("=" * 40)
         # logger.info(f"Processing partition (i_min={partition.i_min}, n={n}, breakdown={use_breakdown})")
         # logger.info("=" * 40)
         
         # 第一步：对所有 member 计算 f 值
-        for member in partition.members:
+        for member in p.members:
             # logger.info(f"Processing member [{member_idx+1}/{len(partition.members)}]")
-            self.get_pf(member, i, n)
+            self.get_pf(p, member, i, n)
             if member['relation']!='=' and Breakdown and i >= 2: 
-                self.get_pf_breakdown(member, i, n)
+                self.get_pf_breakdown(p, member, i, n)
 
 
             # 日志输出
@@ -354,7 +354,7 @@ class Optimizer:
     # ==================== 其他函数 ====================
 
 
-    def get_pf_breakdown(self, member, i, n = 1) -> List:
+    def get_pf_breakdown(self, p: Partition, member, i, n = 1) -> List:
         """
         为了降低下限，把n_LHS的op为=的项拆分出来，仍然定义 i = i_min - 1
         对于LHS = k * x_{i} 的项，做如下拆解：
@@ -426,7 +426,7 @@ class Optimizer:
         """
         
         # i = p.i_min - 1  # RHS的最大下标
-        
+        logger = p.get_logger()
         # 遍历所有 member
         # for member_idx, member in enumerate(p.members):
             # 只处理 relation == '=' 且 n_LHS 存在的 member
@@ -535,7 +535,7 @@ class Optimizer:
 
         return
 
-    def get_pf(self, member, i, n = 1) -> List:
+    def get_pf(self, p: Partition, member, i, n = 1) -> List:
         """
         对单个 Partition 进行分析，返回所有 member 的计算结果。
         
@@ -565,7 +565,7 @@ class Optimizer:
         
         # i = partition.i_min - 1
         # results = []
-        
+        logger = p.get_logger()
         # for member in partition.members:
         K = tuple(member['coeffs'].values())
         relation = member['relation']
@@ -622,16 +622,17 @@ class Optimizer:
                 # results.append(((fracs[n_lhs - 2], 'equ'),))
         return 
     
-    def log_result(self, result: Dict) -> None:
+    def log_result(self,  p: Partition, result: Dict) -> None:
         """
         记录优化结果的日志信息。
         """
+        logger = p.get_logger()
         logger.info("Optimization result:")
         for k, v in result.items():
             logger.info(f" {k}: {v}")
         logger.info("-" * 40)
 
-    def optimize(self, partition: Partition, n = 1, method = 'pulp', Breakdown: bool = True) -> Dict:
+    def optimize(self, p: Partition, n = 1, method = 'pulp', Breakdown: bool = True) -> Dict:
         """
         对 analyze 的输出进行优化选择（使用 PuLP，Fraction 通分后优化）。
         
@@ -656,6 +657,8 @@ class Optimizer:
         返回:
             Dict with status, selection, member_indices_for_zero, etc.
         """
+        
+        logger = p.get_logger()
         logger.info("Starting optimization...")
 
         # 先处理 partition
@@ -671,7 +674,7 @@ class Optimizer:
         gt_idx = []  # 记录索引，可能是 int 或 tuple(member_id, breakdown_id)
         
         # 遍历所有 member
-        for member_id, member in enumerate(partition.members):
+        for member_id, member in enumerate(p.members):
             # if n not in member.get('n_LHS', {}):
             #     continue
             
@@ -794,7 +797,7 @@ class Optimizer:
                     "result": self.f.formatter.fraction_to_base(lower),
                     "details": f"too small, pruned"
                 }
-                self.log_result(result)
+                self.log_result(p, result)
                 return result
             elif not equ_terms:
                 result = {
@@ -802,7 +805,7 @@ class Optimizer:
                     "result": self.f.formatter.fraction_to_base(lower),
                     "details": f"valid solution"
                 }
-                self.log_result(result)
+                self.log_result(p, result)
                 return result
             else:
                 result = {
@@ -810,7 +813,7 @@ class Optimizer:
                     "result": self.f.formatter.fraction_to_base(lower),
                     "details": f"n=1 too small"
                 }
-                self.log_result(result)
+                self.log_result(p, result)
                 return result
 
         
@@ -822,7 +825,7 @@ class Optimizer:
                            self.f.formatter.fraction_to_base(upper)],
                 "details": f"n=1 too small"
             }
-            self.log_result(result)
+            self.log_result(p, result)
             return result
         
         if upper_op == '<':
@@ -832,7 +835,7 @@ class Optimizer:
                            self.f.formatter.fraction_to_base(upper)],
                 "details": f"too small, pruned"
             }
-            self.log_result(result)
+            self.log_result(p, result)
             return result
         
         # 5. 通分：计算所有 Fraction 的最小公倍数作为缩放因子
@@ -861,12 +864,12 @@ class Optimizer:
         # 6. 使用 PuLP 求解（整数版本）
         if method == 'pulp':
             status, selection_or_failure_info = self._optimize_pulp(
-                gt_lower_int, gt_upper_int,
+                p, gt_lower_int, gt_upper_int,
                 combo_lower, combo_upper,
                 m_int)
         elif method == 'enum':
             status, selection_or_failure_info = self._optimize_enum(
-                gt_lower_int, gt_upper_int,
+                p, gt_lower_int, gt_upper_int,
                 combo_lower, combo_upper,
                 m_int)
         else:
@@ -895,17 +898,17 @@ class Optimizer:
                 "details": f"split into {sum(selected_combos)} terms, " 
                     f"with f = {self.f.formatter.fraction_to_base(selected_gts_sum + fixed_sum + equ_sum)}",
             }
-            self.log_result(result)
+            self.log_result(p, result)
             return result
         else:
             result = {
                 "status": "optimization_failed",
                 "details": f"PuLP solver status: {selection_or_failure_info}"
             }
-            self.log_result(result)
+            self.log_result(p, result)
             return result
 
-    def _optimize_enum(self, const0: List[int],
+    def _optimize_enum(self, p: Partition, const0: List[int],
                     constr1: List[int],
                     obj0: List[int],
                     obj1: List[int],
@@ -929,6 +932,7 @@ class Optimizer:
                 - ('failed', reason): 失败，返回失败原因
         """
         n = len(const0)
+        logger = p.get_logger()
         logger.info(f" Enumerating {2**n} combinations...")
         
         best_selection = None
@@ -984,7 +988,7 @@ class Optimizer:
     
         return 'success', best_selection
 
-    def _optimize_pulp(self, const0: List[int],
+    def _optimize_pulp(self, p: Partition, const0: List[int],
                        constr1: List[int],
                        obj0: List[int],
                        obj1: List[int],
@@ -1072,6 +1076,7 @@ class Optimizer:
             - optimize: 调用本方法的上层接口
         """
         n = len(const0)
+        logger = p.get_logger()
         
         # 创建问题实例
         prob = pulp.LpProblem("MinimizeS", pulp.LpMinimize)

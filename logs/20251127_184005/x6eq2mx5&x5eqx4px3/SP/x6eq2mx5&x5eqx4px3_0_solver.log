@@ -1,0 +1,19 @@
+18:40:05|INFO   | Solver x6eq2mx5&x5eqx4px3_0 initialized
+18:40:05|INFO   | ========================================
+18:40:05|CRITICAL| [Depth 0] Processing solver (ID: x6eq2mx5&x5eqx4px3_0)
+18:40:05|INFO   | ========================================
+18:40:05|INFO   | ========================================
+18:40:05|INFO   | Solver x6eq2mx5&x5eqx4px3_0 Assertions:
+18:40:05|INFO   | ========================================
+18:40:05|INFO   |   [1] x6 > x5
+18:40:05|INFO   |   [2] x5 > x4
+18:40:05|INFO   |   [3] x4 > x3
+18:40:05|INFO   |   [4] x3 > x2
+18:40:05|INFO   |   [5] x2 > x1
+18:40:05|INFO   |   [6] x1 > 0
+18:40:05|INFO   |   [7] x6 == 2*x5
+18:40:05|INFO   |   [8] x5 == x4 + x3
+18:40:05|INFO   | ========================================
+18:40:05|INFO   | Solver x6eq2mx5&x5eqx4px3_0 开始分解...
+18:40:05|CRITICAL| Solver x6eq2mx5&x5eqx4px3_0 分解完成: 生成 3 个Partitions, i_min=4
+18:40:05|CRITICAL| Collected 0 success solver(s) at depth 0

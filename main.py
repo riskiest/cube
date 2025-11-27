@@ -1,25 +1,26 @@
 from fractions import Fraction
 import logging
 import sys
+import traceback
 from core import SMTSolver, Partition, Optimizer, setup_logger, get_logger
-from core.logger import flush_all_handlers
+from core.logger import flush_all_handlers, setup_constraint_logger
 from core.smt import Z3UnknownError
 from pprint import pformat, pprint
-from typing import Tuple, List
+from typing import Dict, Tuple, List
 from z3 import sat
 from core import F
 
 # 设置日志
-setup_logger(
-    name="cube",
-    level=logging.DEBUG,
-    log_to_file=True,
-    log_dir="logs",
-    console_level=logging.INFO,
-    file_level=logging.DEBUG
-)
+# setup_logger(
+#     name="cube",
+#     level=logging.DEBUG,
+#     log_to_file=True,
+#     # log_dir="logs",
+#     console_level=logging.INFO,
+#     # file_level=logging.DEBUG
+# )
 
-logger = get_logger()
+
 
 def f_example():
     f = F(n_max=15)
@@ -53,6 +54,13 @@ def f_example():
     #     print(f"n={n}: {fracs[n]}  ({f.formatter.fraction_to_base(fracs[n])})")
 def new_example():
     """示例：演示完整的处理流程"""
+    setup_logger(
+        name="cube",
+        level=logging.DEBUG,
+        log_to_file=True,
+        console_level=logging.INFO
+    )    
+    logger = get_logger()
     try:
         logger.info("=" * 60)
         logger.info("示例：Solver → Partitions → 优化 → 新 Solvers")
@@ -138,6 +146,13 @@ def new_example():
 
 def example():
     """示例：演示完整的处理流程"""
+    setup_logger(
+        name="cube",
+        level=logging.DEBUG,
+        log_to_file=True,
+        console_level=logging.INFO
+    )    
+    logger = get_logger()
     try:
         logger.info("=" * 60)
         logger.info("示例：Solver → Partitions → 优化 → 新 Solvers")
@@ -219,7 +234,7 @@ def process_solver(
     opt: Optimizer,
     depth: int = 0,
     max_depth: int = 10,
-    solver_id: str = "0"
+    solver_id: str = None
 ) -> List[SMTSolver]:
     """
     递归处理单个 solver，收集所有成功的 solver。
@@ -240,29 +255,30 @@ def process_solver(
         List[SMTSolver]: 所有成功的 solver 列表
     
     ID 格式说明:
-        - Solver ID: "0", "0.0_.1", "0.1_.2.0_" (数字+点号，无下划线结尾)
-        - Partition ID: "0.0_", "0.1_.2_" (数字+点号+下划线结尾)
+        - Solver ID: "0", "0.0.1", "0.1.2.0" (数字+点号，无下划线结尾)
+        - Partition ID: "0.0", "0.1.2" (数字+点号，无下划线结尾)
         
     示例:
         solver: 0
-        ├── partition: 0.0_
-        │   ├── solver: 0.0_.0
-        │   │   ├── partition: 0.0_.0.0_
-        │   │   └── partition: 0.0_.0.1_
-        │   └── solver: 0.0_.1
-        └── partition: 0.1_
-            └── solver: 0.1_.0
+        ├── partition: 0.0
+        │   ├── solver: 0.0.0
+        │   │   ├── partition: 0.0.0.0
+        │   │   └── partition: 0.0.0.1
+        │   └── solver: 0.0.1
+        └── partition: 0.1
+            └── solver: 0.1.0
     """
     # 设置 solver ID
     solver.set_id(solver_id)
-    
-    logger.info("=" * 40)
-    logger.info(f"[Depth {depth}] Processing solver (ID: {solver_id})")
-    logger.info("=" * 40)
+
+    slogger = solver.get_logger()
+    slogger.info("=" * 40)
+    slogger.critical(f"[Depth {depth}] Processing solver (ID: {solver_id})")
+    slogger.info("=" * 40)
     
     # 检查递归深度
     if depth >= max_depth:
-        logger.warning(f"Reached max depth {max_depth}")
+        slogger.critical(f"Reached max depth {max_depth}")
         return []
     solver.log_assertions()
     
@@ -277,12 +293,13 @@ def process_solver(
     for p_idx, p in enumerate(partitions):
         # 设置 partition ID：solver_id + . + p_idx + _
         # 例如：0.0_, 0.1_, 0.0_.1.0_, 0.1_.2.1_
-        partition_id = f"{solver_id}.{p_idx}_"
+        partition_id = f"{solver_id}.{p_idx}"
         p.set_id(partition_id)
+        plogger = p.get_logger()
         
-        logger.info("-" * 40)
-        logger.info(f"Partition [{p_idx+1}/{len(partitions)}] (ID: {partition_id}, i_min={p.i_min})")
-        logger.info("-" * 40)
+        plogger.critical("-" * 40)
+        plogger.critical(f"Partition [{p_idx+1}/{len(partitions)}] (ID: {partition_id}, i_min={p.i_min})")
+        plogger.info("-" * 40)
         p.log_assertions()
         p.log_members()
 
@@ -294,7 +311,7 @@ def process_solver(
 
             # 根据状态处理
             if status == 'pruned':
-                logger.info("✂️ Pruned")
+                plogger.info("✂️ Pruned")
                 continue  # 该 partition 被剪枝，处理下一个
             
             elif status == 'success':
@@ -305,9 +322,9 @@ def process_solver(
         # 尝试不同的 n 值
         nmax = 2
         for n in range(1, nmax):
-            logger.info("." * 30)
-            logger.info(f"[n={n}] Starting analysis")
-            logger.info("." * 30)
+            plogger.info("." * 30)
+            plogger.info(f"[n={n}] Starting analysis")
+            plogger.info("." * 30)
             
             # 计算 n_LHS
             p.calc_n_LHS(n)
@@ -315,51 +332,51 @@ def process_solver(
             p.log_LHS(n)
             
             # 优化（先尝试 pulp）
-            logger.info("Optimizing with method=pulp")
+            plogger.info("Optimizing with method=pulp")
             optimize_results = opt.optimize(p, n, method='pulp')
             status = optimize_results['status']
             
             # 如果 pulp 失败，尝试 enum
             if status == 'optimization_failed':
-                logger.warning("pulp failed, retrying with method=enum")
+                plogger.warning("pulp failed, retrying with method=enum")
                 optimize_results = opt.optimize(p, n, method='enum')
                 status = optimize_results['status']
                 
                 if status == 'optimization_failed':
-                    logger.error("Both pulp and enum failed")
+                    plogger.error("Both pulp and enum failed")
                     continue
             
-            logger.info(f"Status: {status}")
+            plogger.info(f"Status: {status}")
             
             # 根据状态处理
             if status == 'pruned':
-                logger.info("✂️ Pruned")
+                plogger.critical("✂️ Pruned")
                 break  # 该 partition 被剪枝，处理下一个
             
             elif status == 'success':
-                logger.info("✅ Success: optimization successful")
+                plogger.critical("✅ Success: optimization successful")
                 success_solvers.append(p.solver)
                 break  # 该 partition 成功，处理下一个
             
             elif status == 'extend':
-                logger.info("🔄 Need to extend to larger n")
+                plogger.critical("🔄 Need to extend to larger n")
                 if nmax == 2:
                     raise ValueError("nmax is 2, cannot extend further")
                 else:
                     if n == 1:
-                        logger.critical("Will try n=2 next")
+                        plogger.critical("Will try n=2 next")
                         continue
                     else:
-                        logger.critical(f"Already at n={n}, cannot extend further")
+                        plogger.critical(f"Already at n={n}, cannot extend further")
                         break  # 无法继续，处理下一个 partition
             
             elif status == 'split':
-                logger.info("🌳 Split: generating new solvers")
+                plogger.critical("🌳 Split: generating new solvers")
                 
                 # 生成约束和新 solvers
                 constraints = p.gen_constraints(optimize_results['member_indices_for_zero'], n)
                 filtered_solvers = p.filter(constraints)
-                logger.info(f"Generated {len(filtered_solvers)} new solvers")
+                plogger.critical(f"Generated {len(filtered_solvers)} new solvers")
                 
                 # 递归处理每个新 solver，收集所有成功的结果
                 for s_idx, new_solver in enumerate(filtered_solvers):
@@ -367,8 +384,8 @@ def process_solver(
                     # 例如：0.0_.0, 0.0_.1, 0.1_.2.0_.1
                     new_solver_id = f"{partition_id}.{s_idx}"
                     
-                    logger.info("-" * 20)
-                    logger.info(f"Recursively processing solver [{s_idx+1}/{len(filtered_solvers)}] (ID: {new_solver_id})")
+                    plogger.info("-" * 20)
+                    plogger.info(f"Recursively processing solver [{s_idx+1}/{len(filtered_solvers)}] (ID: {new_solver_id})")
                     
                     sub_success_solvers = process_solver(
                         new_solver, opt, depth + 1, max_depth, solver_id=new_solver_id
@@ -376,36 +393,315 @@ def process_solver(
                     
                     # 收集子分支的所有成功 solver
                     success_solvers.extend(sub_success_solvers)
-                    logger.info(f"Sub-solver [{s_idx+1}] returned {len(sub_success_solvers)} success(es)")
+                    plogger.info(f"Sub-solver [{s_idx+1}] returned {len(sub_success_solvers)} success(es)")
                 
                 break  # 该 partition 已经分裂并递归处理，处理下一个
             
             else:
-                logger.warning(f"Unknown status: {status}")
+                plogger.error(f"Unknown status: {status}")
                 continue
         
         else:
             # for-else: 所有 n 都尝试完毕但没有 break
-            logger.info(f"Partition [{p_idx+1}] exhausted all n values")
+            plogger.error(f"Partition [{p_idx+1}] exhausted all n values")
     
     # 所有 partitions 处理完毕
-    logger.info(f"Collected {len(success_solvers)} success solver(s) at depth {depth}")
+    slogger.critical(f"Collected {len(success_solvers)} success solver(s) at depth {depth}")
     return success_solvers
 
+def solve(
+    text_constraints: List[str],
+    n_max: int = 36,
+    max_depth: int = 10
+) -> Dict:
+    """
+    处理单个约束组。
+    
+    参数:
+        text_constraints: 约束字符串列表，如 ["x6 == 2*x5", "x5 == x4 + x3"]
+        n_max: F 函数的 n 上限
+        max_depth: 最大递归深度
+    
+    返回:
+        Dict: {
+            "status": "success" | "failed" | "error",
+            "solver_id": str,
+            "success_solvers": List[SMTSolver],
+            "error_message": str (if error)
+        }
+    """
+    result = {
+        "status": "unknown",
+        "solver_id": None,
+        "success_solvers": [],
+        "error_message": None
+    }
+    
+    try:
+        # 生成约束 ID
+        constraint_id = SMTSolver.constraints_to_id(text_constraints)
+        
+        # ✅ 设置该约束的专用日志
+        logger = setup_constraint_logger(constraint_id)
+
+
+        logger.info("=" * 80)
+        logger.info(f"Starting solve_constraints")
+        logger.info(f"Constraints: {text_constraints}")
+        logger.info(f"n_max: {n_max}, max_depth: {max_depth}")
+        logger.info("=" * 80)
+        
+        # 1. 初始化 solver（自动生成 ID）
+        initial_solver = SMTSolver(text_constraints=text_constraints)
+        solver_id = f"{constraint_id}_0"
+        result["solver_id"] = solver_id
+        
+        logger.info(f"Solver ID: {solver_id}")
+        
+        # 2. 检查初始 solver 是否可满足
+        if initial_solver.check() != sat:
+            logger.error("Initial solver is unsat")
+            result["status"] = "failed"
+            result["error_message"] = "Initial solver is unsat"
+            return result
+        
+        logger.info("Initial solver is satisfiable")
+        
+        # 3. 初始化 optimizer
+        opt = Optimizer(n_max=n_max)
+        logger.info(f"Optimizer initialized with n_max={n_max}")
+        
+        # 4. 递归处理
+        logger.info("Starting recursive processing...")
+        success_solvers = process_solver(
+            initial_solver, opt, depth=0, max_depth=max_depth, solver_id=solver_id
+        )
+        
+        # 5. 汇总结果
+        result["status"] = "success" if success_solvers else "failed"
+        result["success_solvers"] = success_solvers
+        
+        logger.info("=" * 80)
+        logger.info(f"solve_constraints completed")
+        logger.info(f"Status: {result['status']}")
+        logger.info(f"Total success solvers: {len(success_solvers)}")
+        logger.info("=" * 80)
+        
+        # 6. 输出成功的 solver
+        if success_solvers:
+            logger.info(f"\n🎉 Found {len(success_solvers)} valid solution(s):")
+            for idx, solver in enumerate(success_solvers, 1):
+                model = solver.get_model()
+                logger.info(f"  Solution {idx} (ID: {solver.get_id()}):")
+                for var_name in ['x1', 'x2', 'x3', 'x4', 'x5', 'x6']:
+                    value = model.get(var_name)
+                    logger.info(f"    {var_name} = {value}")
+        else:
+            logger.warning("⚠️ No valid solutions found")
+        
+        return result
+    
+    except KeyboardInterrupt:
+        logger.warning("❌ Interrupted by user")
+        result["status"] = "error"
+        result["error_message"] = "Interrupted by user"
+        return result
+    
+    except Exception as e:
+        logger.error(f"❌ Error in solve_constraints: {e}")
+        logger.error(traceback.format_exc())
+        result["status"] = "error"
+        result["error_message"] = str(e)
+        return result
+    
+    finally:
+        # logger.info(f"solve_constraints finished for {text_constraints}")
+        # logger.info("-" * 80)
+        flush_all_handlers()
+
+
+def batch_solve(
+    text_constraints_list: List[List[str]],
+    n_max: int = 36,
+    max_depth: int = 10,
+    stop_on_error: bool = False
+) -> List[Dict]:
+    """
+    批量处理多个约束组。
+    
+    参数:
+        text_constraints_list: 约束组列表，每个元素是一个约束字符串列表
+            例如: [
+                ["x6 == 2*x5", "x5 == x4 + x3"],
+                ["x6 > x5", "x5 == x4 + x3"],
+                ["x6 == x5 + x4"]
+            ]
+        n_max: F 函数的 n 上限
+        max_depth: 最大递归深度
+        stop_on_error: 是否在遇到错误时停止（默认 False，继续处理）
+    
+    返回:
+        List[Dict]: 每个约束组的处理结果
+    """
+    # ✅ 获取 batch logger（只记录到 batch_main.log + 控制台）
+    logger = get_logger("cube")
+
+    logger.info("=" * 80)
+    logger.info(f"🚀 Starting batch_solve_constraints")
+    logger.info(f"Total constraint groups: {len(text_constraints_list)}")
+    logger.info(f"Parameters: n_max={n_max}, max_depth={max_depth}, stop_on_error={stop_on_error}")
+    logger.info("=" * 80)
+    
+    results = []
+    
+    for idx, text_constraints in enumerate(text_constraints_list, 1):
+        logger.info("\n" + "=" * 80)
+        logger.info(f"📋 Processing constraint group {idx}/{len(text_constraints_list)}")
+        logger.info("=" * 80)
+        
+        try:
+            result = solve(text_constraints, n_max, max_depth)
+            results.append(result)
+            
+            # 记录当前结果
+            if result["status"] == "success":
+                logger.info(f"✅ Group {idx} SUCCESS: {len(result['success_solvers'])} solution(s)")
+            elif result["status"] == "failed":
+                logger.warning(f"⚠️ Group {idx} FAILED: {result.get('error_message', 'No solutions')}")
+            else:
+                logger.error(f"❌ Group {idx} ERROR: {result.get('error_message', 'Unknown error')}")
+            
+            # 如果设置了 stop_on_error 且当前出错，则停止
+            if stop_on_error and result["status"] == "error":
+                logger.error(f"❌ Stopping batch processing due to error in group {idx}")
+                break
+        
+        except Exception as e:
+            logger.error(f"❌ Unexpected error in group {idx}: {e}")
+            logger.error(traceback.format_exc())
+            
+            results.append({
+                "status": "error",
+                "solver_id": None,
+                "success_solvers": [],
+                "error_message": f"Unexpected error: {str(e)}"
+            })
+            
+            if stop_on_error:
+                logger.error(f"❌ Stopping batch processing due to unexpected error")
+                break
+    
+    # 汇总统计
+    logger.info("\n" + "=" * 80)
+    logger.info("📊 Batch Processing Summary")
+    logger.info("=" * 80)
+    
+    success_count = sum(1 for r in results if r["status"] == "success")
+    failed_count = sum(1 for r in results if r["status"] == "failed")
+    error_count = sum(1 for r in results if r["status"] == "error")
+    total_solutions = sum(len(r["success_solvers"]) for r in results)
+    
+    logger.info(f"Total groups processed: {len(results)}/{len(text_constraints_list)}")
+    logger.info(f"✅ Success: {success_count}")
+    logger.info(f"⚠️ Failed (no solutions): {failed_count}")
+    logger.info(f"❌ Error: {error_count}")
+    logger.info(f"🎯 Total solutions found: {total_solutions}")
+    logger.info("=" * 80)
+    
+    # 详细结果表格
+    logger.info("\nDetailed Results:")
+    logger.info("-" * 80)
+    logger.info(f"{'No.':<5} {'Solver ID':<30} {'Status':<10} {'Solutions':<10}")
+    logger.info("-" * 80)
+    
+    for idx, result in enumerate(results, 1):
+        solver_id = result.get("solver_id", "N/A")[:28]
+        status = result["status"]
+        solutions = len(result["success_solvers"])
+        logger.info(f"{idx:<5} {solver_id:<30} {status:<10} {solutions:<10}")
+    
+    logger.info("=" * 80)
+    
+    return results
 
 def main():
+    """主函数：演示单个约束组的处理"""
+    setup_logger(
+        name="cube",
+        level=10,  # DEBUG
+        log_to_file=True,
+        console_level=20  # INFO
+    )
+    
+    # 单个约束组示例
+    # text_constraints = ["x6 == 2 * x5", "x5 == x4 + x3"]
+    text_constraints = ["x6 == 2 * x5", "x5 == x4 + x2"]
+    
+    result = solve(
+        text_constraints=text_constraints,
+        n_max=36,
+        max_depth=10
+    )
+    
+    flush_all_handlers()
+
+
+def batch_main():
+    """批量处理示例"""
+    setup_logger(
+        name="cube",
+        level=logging.DEBUG,
+        log_to_file=True,
+        console_level=logging.INFO,
+        # file_level=logging.DEBUG
+    )
+    # print(f"Logger created: {logger}")
+    # print(f"Logger handlers: {logger.handlers}")
+
+    # return
+    # 多个约束组
+    # text_constraints = ["x6 == 2 * x5", "x5 == x4 + x3"]
+    # text_constraints = ["x6 == 2 * x5", "x5 == x4 + x2"]
+
+    text_constraints_list = [
+        ["x6 == 2 * x5", "x5 == x4 + x2"],
+        ["x6 == 2 * x5", "x5 == x4 + x3"],
+        # ["x6 == x5 + x4"],
+        # ["x6 == x5 + x3", "x5 == x3 + x2"],
+        # ["x6 >= x5", "x5 >= x4"],
+    ]
+    
+    results = batch_solve(
+        text_constraints_list=text_constraints_list,
+        n_max=36,
+        max_depth=10,
+        stop_on_error=False  # 遇到错误继续处理
+    )
+    
+    flush_all_handlers()
+
+def old_main():
     """主函数：初始化 solver 并启动递归处理"""
+    setup_logger(
+        name="cube",
+        level=logging.DEBUG,
+        log_to_file=True,
+        console_level=logging.INFO
+    )    
+    logger = get_logger()    
     try:
         logger.info("=" * 60)
         logger.info("Cube Decomposition Solver")
         logger.info("=" * 60)
         
         # 1. 初始化 solver（根节点 ID 为 "0"）
-        initial_solver = SMTSolver(text_constraints=["x6 == x5 + x3", "x5 == x3 + x2"])
+        text_constraints=["x6 == 2*x5", "x5 == x4 + x3"]
+        initial_solver = SMTSolver(text_constraints=text_constraints)
+        solver_id = f"{SMTSolver.constraints_to_id(text_constraints)}_0"
         if initial_solver.check() != sat:
             logger.error("Initial solver is unsat.")
             return
-        logger.debug("Initial solver created with ID: 0")
+        logger.debug(f"Initial solver created with ID: {solver_id}")
         
         # 2. 初始化 optimizer
         opt = Optimizer(n_max=36)
@@ -414,7 +710,7 @@ def main():
         # 3. 递归处理（根节点 ID 为 "0"）
         logger.info("\n" + "Starting recursive processing...")
         success_solvers = process_solver(
-            initial_solver, opt, depth=0, max_depth=10, solver_id="0"
+            initial_solver, opt, depth=0, max_depth=10, solver_id=solver_id
         )
         
         # 4. 输出最终结果
@@ -465,7 +761,8 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    # main()
+    batch_main()
     # new_example()
     # f_example()
     # example()
