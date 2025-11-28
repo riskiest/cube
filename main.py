@@ -24,16 +24,46 @@ from core import F
 
 def f_example():
     f = F(n_max=15)
-    fs = [None] * 4
-    fs[0] = f.get((1,2), 2)[1]
-    fs[1] = f.get((1,1), 2)[2]
-    fs[2] = f.get((1,), 2)[3]
-    fs[3] = f._sigma((1, 3))
+    lower = [None] * 6
+    
+    lower[0] = f.get((1,1), 3)[0]
+    # lower[0] = f._sigma((1,1,1))+f.get((1,1), 1)[1]
+    lower[1] = f.get((1,), 3)[2]
+    lower[2] = f.get((2,), 3)[0]
+    lower[3] = f.get((1,), 3)[2]
+    lower[4] = f.get(tuple(), 3)[4]
+    lower[5] = f._sigma((2,))
+
+    upper = [None] * 6
+    upper[0] = f.get((1,1), 3)[-1]
+    upper[1] = f.get((1,), 3)[1]
+    upper[2] = f.get((2,), 3)[-1]
+    upper[3] = f.get((1,), 3)[1]
+    upper[4] = f.get(tuple(), 3)[3]
+    upper[5] = f._sigma((2,))
+
+    # fs[3] = f._sigma((1, 3))
     # fs[3] = f.evaluator.compute_expression("0.0004_6")  
-    for j, frac in enumerate(fs):
+    for j, frac in enumerate(lower):
+        print(f"F{j}: {frac}  ({f.formatter.fraction_to_base(frac)})") 
+    print("----")
+    lower_sum = sum(lower, start=Fraction(0))
+    print(f"Sum: {lower_sum}  ({f.formatter.fraction_to_base(lower_sum)})") 
+    print("----")
+    for j, frac in enumerate(upper):
         print(f"F{j}: {frac}  ({f.formatter.fraction_to_base(frac)})")  
-    f_sum = sum(fs, start=Fraction(0))
-    print(f"Sum: {f_sum}  ({f.formatter.fraction_to_base(f_sum)})")
+    print("----")
+    upper_sum = sum(upper, start=Fraction(0))
+    print(f"Sum: {upper_sum}  ({f.formatter.fraction_to_base(upper_sum)})") 
+    print("----")
+
+    new1 = f.get((2,1), 1)[0]
+    new2 = f.get((2,1), 1)[1]
+    # new = f.get((1,1), 1)[1]
+    # new =f._sigma((1,1,1))
+    print(f"New F1: {new1}  ({f.formatter.fraction_to_base(new1)})")
+    print(f"New F2: {new2}  ({f.formatter.fraction_to_base(new2)})")
+    print(f.formatter.fraction_to_base(f.theta[6]-Fraction(1,6)))
 
     # K_example = tuple((1,1))
     # i_example = 2
@@ -279,7 +309,8 @@ def process_solver(
     # 检查递归深度
     if depth >= max_depth:
         slogger.critical(f"Reached max depth {max_depth}")
-        return []
+        raise ValueError(f"Max depth {max_depth} reached at solver ID: {solver_id}")
+        # return []
     solver.log_assertions()
     
     # 分解生成 partitions
@@ -315,12 +346,12 @@ def process_solver(
                 continue  # 该 partition 被剪枝，处理下一个
             
             elif status == 'success':
-                logger.info("✅ Success: i_min == 1 and optimization successful")
+                plogger.info("✅ Success: i_min == 1 and optimization successful")
                 success_solvers.append(p.solver)
                 continue  # 该 partition 成功，处理下一个
         
         # 尝试不同的 n 值
-        nmax = 2
+        nmax = 3
         for n in range(1, nmax):
             plogger.info("." * 30)
             plogger.info(f"[n={n}] Starting analysis")
@@ -368,7 +399,8 @@ def process_solver(
                         continue
                     else:
                         plogger.critical(f"Already at n={n}, cannot extend further")
-                        break  # 无法继续，处理下一个 partition
+                        raise ValueError(f"Cannot extend beyond n={n}")
+                        # break  # 无法继续，处理下一个 partition
             
             elif status == 'split':
                 plogger.critical("🌳 Split: generating new solvers")
@@ -377,6 +409,11 @@ def process_solver(
                 constraints = p.gen_constraints(optimize_results['member_indices_for_zero'], n)
                 filtered_solvers = p.filter(constraints)
                 plogger.critical(f"Generated {len(filtered_solvers)} new solvers")
+                # 新增逻辑，如果生成的partition的solver与当前solver相同，则报错
+                for fs in filtered_solvers:
+                    if SMTSolver.are_equivalent(fs, solver):
+                        plogger.error("Generated solver is equivalent to current solver, aborting to prevent infinite loop")
+                        raise ValueError("Generated solver is equivalent to current solver")
                 
                 # 递归处理每个新 solver，收集所有成功的结果
                 for s_idx, new_solver in enumerate(filtered_solvers):
@@ -762,7 +799,7 @@ def old_main():
 
 if __name__ == "__main__":
     # main()
-    batch_main()
+    # batch_main()
     # new_example()
-    # f_example()
+    f_example()
     # example()

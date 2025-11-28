@@ -89,11 +89,11 @@ class Partition:
         logger.info("=" * 40)
         logger.info(f"Partition {self.id} Members ({len(self.members)} total):")
         logger.info("=" * 40)
-        for idx, member in enumerate(self.members):
+        for idx, member in enumerate(self.members, 1):
             logger.info(f"  [{idx}] {member.get('relation', '?')}: {member.get('expr', '')}")
         logger.info("=" * 40)
     
-    def log_LHS(self, n=1, Breakdown=True, DEBUG=False) -> None:
+    def log_LHS(self, n=1, Breakdown=True, DEBUG=True) -> None:
         """打印该 Partition 的每个 member 的 LHS 和对应的 n_LHS 分析结果。"""
         logger = self.get_logger()
         logger.info(f"Partition {self.id}: When n = {n}, x_{self.i_min} > {n} * x_{self.i_min - 1} :")
