@@ -7,6 +7,8 @@ from fractions import Fraction
 from math import comb
 import pulp
 
+from core.breakdown import BreakdownNode
+
 from .F import F  # 使用相对导入（同一包内）
 from .partition import Partition  # 使用相对导入
 from .logger import get_logger, log_on_error  # 导入 get_logger 函数
@@ -82,7 +84,7 @@ class Optimizer:
         # i = partition.i_min - 1
         fs = []
         
-        for idx, member in enumerate(p.members):
+        for idx, member in enumerate(p.breakdowns):
             if member['relation'] != '=':
                 continue
             
@@ -297,7 +299,7 @@ class Optimizer:
         # logger.info("=" * 40)
         
         # 第一步：对所有 member 计算 f 值
-        for member in p.members:
+        for member in p.breakdowns:
             # logger.info(f"Processing member [{member_idx+1}/{len(partition.members)}]")
             self.get_pf(p, member, i, n)
             if member['relation']!='=' and Breakdown and i >= 2: 
@@ -415,7 +417,7 @@ class Optimizer:
                 breakdown[k][combo] = 0
                 breakdown[j][combo] = s(k-j, i-1)
             5.5 type字段(这个字段是跨域的，因此下面的i定义为 RHS的最大下标，在此处为 i_min-2)，
-                fixed: \sum (x_{j>i}) = 0 
+                fixed: sum (x_{j>i}) = 0 
                     这个值已经是准确计算的，不需要优化选择
                 equ: LHS == k * x_{i} 这个值虽然只有上限，没有准确值，但不参与优化，
                     在breakdown里应该不存在了
@@ -535,7 +537,7 @@ class Optimizer:
 
         return
 
-    def get_pf(self, p: Partition, member, i, n = 1) -> List:
+    def get_pf(self, p: Partition, node, i, n = 1) -> List:
         """
         对单个 Partition 进行分析，返回所有 member 的计算结果。
         
@@ -560,19 +562,15 @@ class Optimizer:
         返回:
             List: 每个元素为 Fraction 或 ((Fraction, int), (Fraction, int))
         """
-        # if partition.i_min is None or partition.i_min <= 1:
-        #     return []
-        
-        # i = partition.i_min - 1
-        # results = []
+
         logger = p.get_logger()
         # for member in partition.members:
-        K = tuple(member['coeffs'].values())
-        relation = member['relation']
+        K = tuple(node['coeffs'].values())
+        relation = node['relation']
         
         if relation == '=':
             sigma_val = self.f._sigma(K)
-            member['n_LHS'][n].update({
+            node['n_LHS'][n].update({
                 'values': [sigma_val, sigma_val],
                 'combo': 0,
                 'type': 'fixed'
@@ -582,8 +580,8 @@ class Optimizer:
             fracs = self.f.get(K, i)
             # n_to_idx = {n: idx for idx, n in enumerate(self.f.n_range)}
             
-            n_lhs = member['n_LHS'][n]['n_lhs']
-            op = member['n_LHS'][n]['op']
+            n_lhs = node['n_LHS'][n]['n_lhs']
+            op = node['n_LHS'][n]['op']
             # if 1 not in n_LHS:
             #     continue
             #  = n_LHS[1]
@@ -598,7 +596,7 @@ class Optimizer:
                 upper = fracs[n_lhs - 1]
                 combo = self.s(n_lhs, i)
                 type_val = 'gt'
-                member['n_LHS'][n].update({
+                node['n_LHS'][n].update({
                     'values': [lower, upper],
                     'combo': combo,
                     'type': type_val
@@ -608,7 +606,7 @@ class Optimizer:
                 # results.append((val1, val2))
             elif op == '=':
                 value = fracs[n_lhs - 2]
-                member['n_LHS'][n].update({
+                node['n_LHS'][n].update({
                     'values': [value, value],
                     'combo': 0,
                     'type': 'equ'
@@ -621,7 +619,386 @@ class Optimizer:
                 # val2 = (fracs[idx_n_minus2], 0)
                 # results.append(((fracs[n_lhs - 2], 'equ'),))
         return 
-    
+
+    def new_calc_node(self, p: Partition, n = 1) -> None:
+        """
+        对单个 Partition 进行分析，返回所有 member 的计算结果。
+        
+        算法：
+        1. 读取 partition.i_min，令 i = i_min - 1
+        2. 对每个 member：
+           - 读取 coeffs 的 K = tuple(coeffs.values())
+           - 读取 relation（即 member['relation']）
+           - 如果 relation == '='：
+               返回 F._sigma(K)（Fraction 类型）
+           - 否则（relation == '>'）：
+               - 获取 F(K, i) 的结果（Fraction 列表，对应 n=-2..10）
+               - 读取 member['n_LHS'][1]，假设返回 (k_val, op)
+               - 如果 op == '>'：
+                   返回 ((F(K,i)[n_lhs], s(n_lhs, i)), (F(K,i)[n_lhs-1], 0))
+               - 如果 op == '='：
+                   返回 ((F(K,i)[n_lhs-2], 0), (F(K,i)[n_lhs-2], 0))
+        
+        参数:
+            partition: Partition 实例
+        
+        返回:
+            List: 每个元素为 Fraction 或 ((Fraction, int), (Fraction, int))
+        """
+
+        logger = p.get_logger()
+        for node in p.nodes:        
+            K = tuple(node.coeffs.values())
+            relation = node.relation
+            
+            if relation == '=':
+                sigma_val = self.f._sigma(K)
+                node.n_LHS[n].update({
+                    'values': [sigma_val, sigma_val],
+                    'combo': 0,
+                    'type': 'fixed'
+                })                
+                # results.append(((sigma_val, 'fixed'),))
+            else:
+                # 需要node.i_min>=2, 由于node.i_min == 1且node.relation != '='已被排除
+                # 可以放心使用
+                fracs = self.f.get(K, node.i_min - 1)
+                # n_to_idx = {n: idx for idx, n in enumerate(self.f.n_range)}
+                
+                n_lhs = node.n_LHS[n]['n_lhs']
+                op = node.n_LHS[n]['op']
+                # if 1 not in n_LHS:
+                #     continue
+                #  = n_LHS[1]
+                
+                # if k_val is None:
+                #     continue
+                
+                if op == '>':
+                    # if n_lhs not in n_to_idx or (n_lhs - 1) not in n_to_idx:
+                    #     continue
+                    lower = fracs[n_lhs]
+                    upper = fracs[n_lhs - 1]
+                    combo = self.s(n_lhs, node.i_min - 1)
+                    node.n_LHS[n].update({
+                        'values': [lower, upper],
+                        'combo': combo,
+                        'type': 'gt'
+                    })                    
+                    # val1 = (fracs[n_lhs], self.s(n_lhs, i))
+                    # val2 = (fracs[n_lhs - 1], 0)
+                    # results.append((val1, val2))
+                # 理论上op == '=' 不会出现了，暂时保留代码
+                elif op == '=':
+                    raise Exception("op == '=' should not appear in new_calc_node")
+                    # value = fracs[n_lhs - 2]
+                    # node.n_LHS[n].update({
+                    #     'values': [value, value],
+                    #     'combo': 0,
+                    #     'type': 'equ'
+                    # })                   
+        return 
+
+    def new_optimize(self, p: Partition, n = 1, method = 'pulp') -> Dict:
+        """
+        对 analyze 的输出进行优化选择（使用 PuLP，Fraction 通分后优化）。
+        
+        算法：
+        1. 提取所有非 tuple 成员（Fraction 类型），计算它们的和 sigma_sum
+        2. 计算上限 m = self.theta_6 - sigma_sum
+        3. 若没有 tuple 成员：
+           - m > 0: 剪枝
+           - m <= 0: 这是一个可行解，直接返回
+        4. 快速剪枝检查（有 tuple 时）：
+           - 若所有 tuple[0][0] 之和 > m，返回 "n=1 too small"
+           - 若所有 tuple[1][0] 之和 < m，返回 "pruned"
+        5. 将所有 Fraction 通分为整数后，使用 PuLP 求解最优选择：
+           - 决策变量：每个 tuple 选择 t=0（第一项）或 t=1（第二项）
+           - 约束：sum(tuple[t][0]) < m（通分后的整数约束）
+           - 目标：min(sum(tuple[t][1]))
+        
+        参数:
+            method: 1. 'pulp' 2. 'enum' (遍历)
+            part_fs: analyze_partition 的输出
+        
+        返回:
+            Dict with status, selection, member_indices_for_zero, etc.
+        """
+        
+        logger = p.get_logger()
+        logger.info("Starting optimization...")
+
+        # 先处理 partition
+        # self.process_partition(partition, n, Breakdown)
+        
+        # 初始化分类容器
+        fixed_terms = []
+        equ_terms = []
+        gt_lower = []
+        gt_upper = []
+        combo_lower = []
+        combo_upper = []
+        gt_idx = []  # 记录索引，可能是 int 或 tuple(member_id, breakdown_id)
+        
+        for idx, node in enumerate(p.nodes):
+            n_lhs_info = node.n_LHS[n]
+            type_val = n_lhs_info['type']
+            if type_val == 'fixed':
+                value = n_lhs_info['values'][0]
+                fixed_terms.append(value)
+            elif type_val == 'gt':
+                lower, upper = n_lhs_info['values']
+                combo = n_lhs_info['combo']
+                
+                gt_lower.append(lower)
+                gt_upper.append(upper)
+                combo_lower.append(combo)
+                combo_upper.append(0)
+                gt_idx.append(idx)
+            elif type_val == 'equ':
+                equ_value = n_lhs_info['values'][0]
+                equ_terms.append(equ_value)
+
+        # 遍历所有 member
+        # for member_id, member in enumerate(p.breakdowns):
+        #     # if n not in member.get('n_LHS', {}):
+        #     #     continue
+            
+        #     n_lhs_info = member['n_LHS'][n]
+        #     type_val = n_lhs_info['type']
+            
+        #     if type_val == 'fixed':
+        #         # 情况1: fixed 类型
+        #         value = n_lhs_info['values'][0]
+        #         fixed_terms.append(value)
+        #         # logger.info(f" [{member_id+1}] {self.f.formatter.fraction_to_base(value)} (fixed)")
+            
+        #     elif type_val == 'gt':
+        #         # 情况2: gt 类型
+        #         lower, upper = n_lhs_info['values']
+        #         combo = n_lhs_info['combo']
+                
+        #         gt_lower.append(lower)
+        #         gt_upper.append(upper)
+        #         combo_lower.append(combo)
+        #         combo_upper.append(0)
+        #         gt_idx.append(member_id)
+                
+        #         # logger.info(
+        #         #     f" [{member_id+1}] [{self.f.formatter.fraction_to_base(lower)}, "
+        #         #     f"{self.f.formatter.fraction_to_base(upper)}] s:[{combo}] (gt)"
+        #         # )
+            
+        #     elif type_val == 'equ':
+        #         # 情况3: equ 类型
+        #         equ_value = n_lhs_info['values'][0]
+                
+        #         # 检查是否使用 breakdown
+        #         use_breakdown = False
+        #         if Breakdown and 'breakdown' in member:
+        #             # 计算 breakdown 各项之和
+        #             breakdown_sum = Fraction(0)
+        #             for bd_item in member['breakdown']:
+        #                 # if n in bd_item.get('n_LHS', {}):
+        #                 breakdown_sum += bd_item['n_LHS'][n]['values'][0]
+                    
+        #             # 比较 equ 值与 breakdown 之和
+        #             if breakdown_sum < equ_value:
+        #                 use_breakdown = True
+        #                 logger.info(
+        #                     f" [{member_id+1}] Using breakdown "
+        #                     f"(breakdown={self.f.formatter.fraction_to_base(breakdown_sum)} "
+        #                     f"< equ={self.f.formatter.fraction_to_base(equ_value)})"
+        #                 )
+        #             else:
+        #                 logger.info(
+        #                     f" [{member_id+1}] Using equ value "
+        #                     f"(breakdown={self.f.formatter.fraction_to_base(breakdown_sum)} "
+        #                     f">= equ={self.f.formatter.fraction_to_base(equ_value)})" 
+        #                 )
+                
+        #         if use_breakdown:
+        #             # 使用 breakdown，分别处理其中的 fixed 和 gt 项
+        #             for bd_id, bd_item in enumerate(member['breakdown']):
+        #                 # if n not in bd_item.get('n_LHS', {}):
+        #                 #     continue
+                        
+        #                 bd_n_lhs = bd_item['n_LHS'][n]
+        #                 bd_type = bd_n_lhs['type']
+                        
+        #                 if bd_type == 'fixed':
+        #                     bd_value = bd_n_lhs['values'][0]
+        #                     fixed_terms.append(bd_value)
+        #                     # logger.info(
+        #                     #     f"   [{member_id+1}.{bd_id}] "
+        #                     #     f"{self.f.formatter.fraction_to_base(bd_value)} (bd:fixed)"
+        #                     # )
+                        
+        #                 elif bd_type == 'gt':
+        #                     bd_lower, bd_upper = bd_n_lhs['values']
+        #                     bd_combo = bd_n_lhs['combo']
+                            
+        #                     gt_lower.append(bd_lower)
+        #                     gt_upper.append(bd_upper)
+        #                     combo_lower.append(bd_combo)
+        #                     combo_upper.append(0)
+        #                     gt_idx.append((member_id, bd_id))  # tuple 索引
+                            
+        #                     # logger.info(
+        #                     #     f"   [{member_id+1}.{bd_id}] "
+        #                     #     f"[{self.f.formatter.fraction_to_base(bd_lower)}, "
+        #                     #     f"{self.f.formatter.fraction_to_base(bd_upper)}] "
+        #                     #     f"s:[{bd_combo}] (bd:gt)"
+        #                     # )
+        #         else:
+        #             # 不使用 breakdown，直接使用 equ 值
+        #             equ_terms.append(equ_value)
+                    # logger.info(
+                    #     f" [{member_id+1}] {self.f.formatter.fraction_to_base(equ_value)} (equ)"
+                    # )
+        
+        # 计算各部分的和
+        fixed_sum = sum(fixed_terms, Fraction(0))
+        equ_sum = sum(equ_terms, Fraction(0))
+        gt_lower_sum = sum(gt_lower, Fraction(0))
+        gt_upper_sum = sum(gt_upper, Fraction(0))
+        
+        # 计算上下界
+        lower = fixed_sum + equ_sum + gt_lower_sum
+        upper = fixed_sum + equ_sum + gt_upper_sum
+        lower_op = ">" if lower > self.theta_6 else "==" if lower == self.theta_6 else "<"
+        upper_op = ">" if upper > self.theta_6 else "==" if upper == self.theta_6 else "<"
+        
+        logger.info(f" lower bound: {self.f.formatter.fraction_to_base(lower)} ({lower_op} {self.f.formatter.fraction_to_base(self.theta_6)})")
+        logger.info(f" upper bound: {self.f.formatter.fraction_to_base(upper)} ({upper_op} {self.f.formatter.fraction_to_base(self.theta_6)})")
+        logger.info("-" * 40)
+        
+        m = self.theta_6 - fixed_sum - equ_sum
+        
+        # 2. 若没有 gt 成员，此时是定值，没有优化的必要
+        if not gt_lower:
+            if m > 0:
+                result = {
+                    "status": "pruned",
+                    "result": self.f.formatter.fraction_to_base(lower),
+                    "details": f"too small, pruned"
+                }
+                self.log_result(p, result)
+                return result
+            elif not equ_terms:
+                result = {
+                    "status": "success",
+                    "result": self.f.formatter.fraction_to_base(lower),
+                    "details": f"valid solution"
+                }
+                self.log_result(p, result)
+                return result
+            else:
+                result = {
+                    "status": "extend",
+                    "result": self.f.formatter.fraction_to_base(lower),
+                    "details": f"n=1 too small"
+                }
+                self.log_result(p, result)
+                return result
+
+        
+        # 4. 快速剪枝检查
+        if lower_op == '>':
+            result = {
+                "status": "extend",
+                "result": [self.f.formatter.fraction_to_base(lower),
+                           self.f.formatter.fraction_to_base(upper)],
+                "details": f"n=1 too small"
+            }
+            self.log_result(p, result)
+            return result
+        
+        if upper_op == '<':
+            result = {
+                "status": "pruned",
+                "result": [self.f.formatter.fraction_to_base(lower),
+                           self.f.formatter.fraction_to_base(upper)],
+                "details": f"too small, pruned"
+            }
+            self.log_result(p, result)
+            return result
+        
+        # 5. 通分：计算所有 Fraction 的最小公倍数作为缩放因子
+        from math import gcd
+        from functools import reduce
+        
+        def lcm(a, b):
+            return abs(a * b) // gcd(a, b)
+        
+        gts = gt_lower + gt_upper + [m]
+        denominators = [f.denominator for f in gts]
+        scale = reduce(lcm, denominators, 1)
+        
+        # 缩放后的整数值
+        gt_lower_int = [int(f * scale) for f in gt_lower]
+        gt_upper_int = [int(f * scale) for f in gt_upper]
+        m_int = int(m * scale)
+
+        logger.info(f" Optimization Problem: ")
+        logger.info(f" Decision variables: choices[i] ∈ {{0, 1}} for i in [0, {len(gt_lower)-1}]")
+        logger.info(f" Objective: min sum([(1-choices[i]) * lower_combo[i] + choices[i] * upper_combo[i]])")
+        logger.info(f" constraints: sum([(1-choices[i]) * lower[i] + choices[i] * upper[i]]) < constUpper")
+        logger.info(f"   Scaling factor: {scale}")
+        logger.info(f"   lower: {gt_lower_int}, lower_combo: {combo_lower}")
+        logger.info(f"   upper: {gt_upper_int}, upper_combo: {combo_upper}")
+        logger.info(f"   constUpper (int): {m_int}")
+        logger.info("-" * 40)
+        
+        n_vars = len(gt_lower)
+        # 6. 使用 PuLP 求解（整数版本）
+        if method == 'pulp':
+            status, selection_or_failure_info = self._optimize_pulp(
+                p, gt_lower_int, gt_upper_int,
+                combo_lower, combo_upper,
+                m_int)
+        elif method == 'enum':
+            status, selection_or_failure_info = self._optimize_enum(
+                p, gt_lower_int, gt_upper_int,
+                combo_lower, combo_upper,
+                m_int)
+        else:
+            raise NotImplementedError("Unknown optimization method.")
+
+        if status is not None:
+            # total_combo = int(pulp.value(objective_expr))
+            selected_gts = [
+                gt_lower[i] if selection_or_failure_info[i] == 0 else gt_upper[i]
+                for i in range(n_vars)
+            ]
+            selected_combos = [
+                combo_lower[i] if selection_or_failure_info[i] == 0 else combo_upper[i]
+                for i in range(n_vars)
+            ]
+            selected_gts_sum = sum(selected_gts, Fraction(0))
+            
+            # 找出 selection 中为 0 的项对应的 member 索引
+            selected_idx = [gt_idx[i] for i in range(n_vars) if selection_or_failure_info[i] == 0]
+            
+            result = {
+                "status": "split",
+                "selection": selection_or_failure_info,
+                "member_indices_for_zero": selected_idx,
+                "selected_s_values": selected_combos,
+                "details": f"split into {sum(selected_combos)} terms, " 
+                    f"with f = {self.f.formatter.fraction_to_base(selected_gts_sum + fixed_sum + equ_sum)}",
+            }
+            self.log_result(p, result)
+            return result
+        else:
+            result = {
+                "status": "optimization_failed",
+                "details": f"PuLP solver status: {selection_or_failure_info}"
+            }
+            self.log_result(p, result)
+            return result
+
+
     def log_result(self,  p: Partition, result: Dict) -> None:
         """
         记录优化结果的日志信息。
@@ -674,7 +1051,7 @@ class Optimizer:
         gt_idx = []  # 记录索引，可能是 int 或 tuple(member_id, breakdown_id)
         
         # 遍历所有 member
-        for member_id, member in enumerate(p.members):
+        for member_id, member in enumerate(p.breakdowns):
             # if n not in member.get('n_LHS', {}):
             #     continue
             
@@ -857,7 +1234,7 @@ class Optimizer:
         logger.info(f" Optimization Problem: ")
         logger.info(f" Scaling factor: {scale}")
         logger.info(f" lower: {gt_lower_int}, lower_combo: {combo_lower}")
-        logger.info(f" upper: {gt_upper_int}, upper_combo: {combo_upper}")
+        logger.info(f" upper: {gt_upper_int}, upper_combo: {combo_upper}")        
         logger.info("-" * 40)
         
         n_vars = len(gt_lower)

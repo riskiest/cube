@@ -14,6 +14,8 @@ from z3 import (Solver, BoolRef, ArithRef, sat, unsat, unknown, BoolVal,
 from copy import deepcopy
 from itertools import product
 from core.logger import get_sp_logger, get_logger
+from core.breakdown import BreakdownNode, BreakdownTree
+
 
 # 获取模块级 logger
 logger = get_logger("smt")
@@ -54,7 +56,8 @@ class SMTSolver:
 
         self.M = M  # 假设的常量 M，用于某些约束  
         self._push_count = 0  # 记录 push 的次数
-        self.id = id  # 可选的标识符
+        if id:
+            self.set_id(id)  # 可选的标识符
 
         # 默认约束
         self.solver = Solver()
@@ -425,6 +428,511 @@ class SMTSolver:
         # 此功能需要 z3.Optimize，这里仅作为接口预留
         raise NotImplementedError("优化功能需要使用 z3.Optimize，当前使用 z3.Solver")
 
+    # ==================== breakdown ====================
+    def new_decompose(self, recursive: bool = True) -> BreakdownTree:
+        """
+        分解 solver，生成 breakdown 树（统一流程）。
+        
+        参数:
+            recursive: 是否递归分解（默认 True）
+        
+        返回:
+            BreakdownTree: breakdown 树对象
+            
+        注意:
+            - 第一层的 i_min 可通过 tree.roots[0].i_min 获取
+            - 树的深度自然受限于 i_min 递减（最多 5 层）
+        """
+        logger = self.get_logger()
+        logger.info(f"Solver {self.id} 开始分解 (recursive={recursive})...")
+        
+        # ✅ 创建虚拟根节点
+        root = BreakdownNode.create_root(self.vars["x6"])
+        
+        # ✅ 统一调用递归分解
+        self._break_recursive(root, recursive=recursive)
+        
+        # ✅ 虚拟根节点的 children 就是第一层节点
+        # first_level_nodes = virtual_root.children
+        
+        # ✅ 构造树（以第一层节点为根）
+        # tree = BreakdownTree(roots=first_level_nodes)
+        tree = BreakdownTree(root=root)
+        
+        # 日志输出
+        # if first_level_nodes:
+        #     # first_i_min = first_level_nodes[0].i_min
+        #     logger.critical(f"Solver {self.id} 分解完成: {len(first_level_nodes)} 个根节点, i_min={first_i_min}")
+        # else:
+        tree.print_tree(logger)
+
+        # logger.critical(f"Solver {self.id} 分解完成")
+        
+        return tree
+
+    def _break_recursive(
+        self,
+        parent: BreakdownNode,
+        recursive: bool = True
+    ) -> None:
+        """
+        递归分解节点（统一逻辑）。
+        
+        参数:
+            parent: 父节点（可能是虚拟根节点）
+            recursive: 是否递归分解子节点
+        
+        注意:
+            - 无需 depth 参数，树深度由 i_min 递减自然控制
+            - 终止条件：i_min == 1（无法继续分解）
+        """
+        # current_i_min = parent.i_min
+        
+        # ✅ 终止条件1：i_min == 1（最小变量）
+        # ✅ 终止条件2：relation 为 '=' 时不继续分解
+        if parent.i_min == 1 or parent.relation == '=':
+            return
+        
+        # ✅ 调用统一的 _break
+        child_nodes = self._break(
+            LHS=parent.LHS,
+            constraints=parent.constraints,
+            upper_limit=parent.i_min
+        )
+        
+        # ✅ 检查是否找到有效分解
+        if not child_nodes:
+            return
+        
+        # ✅ 更新子节点的 i_min 并添加到父节点
+        for child in child_nodes:
+            child.coeffs = {**parent.coeffs, **child.coeffs}
+            # child.i_min = i_new
+            parent.add_child(child)
+        
+        # ✅ 递归分解子节点
+        if recursive:
+            for child in child_nodes:
+                self._break_recursive(child, recursive=True)
+
+    def _break(
+        self,
+        LHS: ArithRef,
+        constraints: List[BoolRef] = None,
+        upper_limit: int = 6
+    ) -> List[BreakdownNode]:
+        """
+        统一的分解逻辑（生成 BreakdownNode 列表）。
+        
+        参数:
+            LHS: 左侧表达式
+            context_expr: 上下文约束（None 表示无额外约束）
+            upper_limit: 搜索上界（从 x_{upper_limit-1} 开始搜索）
+        
+        返回:
+            (nodes, i_min): 
+            - nodes: BreakdownNode 列表
+            - i_min: 找到的有上界变量索引（若无则返回 None）
+        """
+        # ✅ 创建临时 solver
+        node_solver = SMTSolver(base_solver=self, constraints=constraints)
+        # node_solver = Solver()
+        # if context_expr is not None:
+        #     temp_solver.add(context_expr)
+        
+        # 1️⃣ 查找 i_min（第一个有上界的变量）
+        i_min = None
+        for i in range(upper_limit - 1, 0, -1):
+            xi = self.vars[f"x{i}"]
+            test = LHS > self.M * xi
+            
+            # 如果 test 不可满足（无解），说明 LHS/xi 有界，记录 i_min
+            if not node_solver.is_sat(test):
+                i_min = i
+            # 如果 test 满足，说明 LHS/xi 无界，那么LHS/x_{<i}自然也是无界，不再搜索
+            else:
+                break
+                # break
+            # node_solver.push()
+            # try:
+            #     node_solver.add(test)
+            #     if node_solver.check() == unsat:
+            #         i_min = i
+            #         break
+            # finally:
+            #     node_solver.pop()
+        
+        if i_min is None:
+            return []
+        
+        # 2️⃣ 计算每个变量的最大 k
+        indices = list(range(upper_limit - 1, i_min - 1, -1))
+        var_names = [f"x{i}" for i in indices]
+        
+        max_ks = {}
+        for vn in var_names:
+            xi_var = self.vars[vn]
+            k_max = None
+            
+            for k in range(0, self.M + 1):
+                prop = LHS >= k * xi_var
+                if node_solver.is_sat(prop):
+                    k_max = k
+                else:
+                    break
+
+                # node_solver.push()
+                # try:
+                #     node_solver.add(prop)
+                #     if node_solver.check() == sat:
+                #         last_ok = k
+                #     else:
+                #         break
+                # finally:
+                #     node_solver.pop()
+            
+            if k_max is None or k_max >= self.M:
+                raise SMTError(f"LHS: {LHS} / {vn} < 0, 程序有bug")
+            
+            max_ks[vn] = k_max
+        
+        # 3️⃣ 枚举所有组合
+        nodes = []
+        ranges = [range(0, max_ks[vn] + 1) for vn in var_names]
+        
+        for ks in product(*ranges):
+            coeff_map = {var_names[idx]: int(ks[idx]) for idx in range(len(var_names))}
+            
+            # 构造 sum_expr
+            sum_expr = None
+            for vn, k in coeff_map.items():
+                if k == 0:
+                    continue
+                term = self.vars[vn] * k
+                sum_expr = term if sum_expr is None else sum_expr + term
+            
+            if sum_expr is None:
+                sum_expr = RealVal(0)
+            
+            new_LHS = LHS - sum_expr
+            
+            # 检查 >= 是否可满足
+            prop_ge = new_LHS >= 0
+            if not self.is_sat(prop_ge):
+                # 如果combo的每一项都不小于this_comb的每一项，comb>=this_comb
+                # 如果this_comb不满足>=，则comb也不满足
+                # 但为了减少程序复杂性，不做比较
+                continue
+
+            # node_solver.push()
+            # try:
+            #     node_solver.add(prop_ge)
+            #     if node_solver.check() == unsat:
+            #         continue
+            # finally:
+            #     node_solver.pop()
+            
+            # 检查 ">" 关系
+            prop_gt = new_LHS > 0
+            
+            # node_solver.push()
+            # try:
+            #     node_solver.add(Not(prop_gt))
+            #     entailed_gt = (node_solver.check() == unsat)
+            # finally:
+            #     node_solver.pop()
+            
+            if node_solver.is_entailed(prop_gt):
+                node = BreakdownNode(
+                    LHS=new_LHS,
+                    coeffs=coeff_map,
+                    relation=">",
+                    entailed=True,
+                    expr=prop_gt,
+                    i_min=i_min, 
+                    constraints=deepcopy(constraints)
+                )
+                nodes.append(node)
+            elif node_solver.is_sat(prop_gt):
+                # node_solver.push()
+                # try:
+                #     node_solver.add(prop_gt)
+                #     if node_solver.check() == sat:
+                node = BreakdownNode(
+                    LHS=new_LHS,
+                    coeffs=coeff_map,
+                    relation=">",
+                    entailed=False,
+                    expr=prop_gt,
+                    i_min=i_min,
+                    constraints=deepcopy(constraints) + [prop_gt]
+                )
+                nodes.append(node)
+                # finally:
+                #     node_solver.pop()
+            
+            # 检查 "=" 关系
+            prop_eq = new_LHS == 0
+            
+            # node_solver.push()
+            # try:
+            #     node_solver.add(Not(prop_eq))
+            #     entailed_eq = (node_solver.check() == unsat)
+            # finally:
+            #     node_solver.pop()
+            
+            if node_solver.is_entailed(prop_eq):
+                node = BreakdownNode(
+                    LHS=new_LHS,
+                    coeffs=coeff_map,
+                    relation="=",
+                    entailed=True,
+                    expr=prop_eq,
+                    i_min=i_min,
+                    constraints=deepcopy(constraints)
+                )
+                nodes.append(node)
+            elif node_solver.is_sat(prop_eq):
+                # node_solver.push()
+                # try:
+                #     node_solver.add(prop_eq)
+                #     if node_solver.check() == sat:
+                node = BreakdownNode(
+                            LHS=new_LHS,
+                            coeffs=coeff_map,
+                            relation="=",
+                            entailed=False,
+                            expr=prop_eq,
+                            i_min=i_min,
+                            constraints=deepcopy(constraints) + [prop_eq]
+                        )
+                nodes.append(node)
+                # finally:
+                #     node_solver.pop()
+        
+        return nodes
+
+
+    # def decompose(self, recursive: bool = True) -> tuple:
+    #     """
+    #     分解 solver，生成 partitions（支持递归 breakdown）。
+        
+    #     参数:
+    #         recursive: 是否递归分解 LHS（默认 True）
+        
+    #     返回:
+    #         (groups, i_min): groups 为分组列表，i_min 为初始下标
+    #     """
+    #     logger = self.get_logger()
+    #     logger.info(f"Solver {self.id} 开始分解 (recursive={recursive})...")
+        
+    #     # 第一层分解
+    #     results, i_min = self._decompose()
+    #     groups = self.classify(results, i_min)
+    #     groups = self.produce_partitions(groups)
+        
+    #     # ✅ 如果启用递归，对每个 member 进行 breakdown
+    #     if recursive:
+    #         for g in groups:
+    #             for member in g["members"]:
+    #                 if not member.get("entailed"):  # 只对非 entailed 成员分解
+    #                     member["breakdown"] = self._breakdown_member(member)
+        
+    #     logger.critical(f"Solver {self.id} 分解完成: {len(groups)} 个 Partitions, i_min={i_min}")
+    #     return groups, i_min
+
+    def _breakdown_member(self, member: Dict, depth: int = 0, max_depth: int = 10) -> List[Dict]:
+        """
+        递归分解单个 member，生成 breakdown 列表。
+        
+        算法:
+        1. 获取当前 LHS 和 i_min
+        2. 对 LHS 尝试找新的有上界变量 i_new < i_min
+        3. 如果找到，枚举 LHS - Σk_j·x_j 的所有可能
+        4. 递归处理每个新 LHS（直到 i_new = 1 或达到深度限制）
+        
+        参数:
+            member: 当前 member 字典
+            depth: 当前递归深度
+            max_depth: 最大递归深度
+        
+        返回:
+            List[Dict]: breakdown 项列表
+        """
+        # if depth >= max_depth:
+        #     return []
+        
+        LHS = member["LHS"]
+        current_i_min = member.get("i_min")
+        
+        # if current_i_min is None:
+        #     return []
+        
+        # 终止条件：i_min = 1
+        if current_i_min == 1:
+            return []
+        
+        # 寻找新的有上界变量
+        i_new = self._find_bounded_for_LHS(LHS, current_i_min)
+        
+        if i_new is None or i_new >= current_i_min:
+            # 无法继续分解
+            return []
+        
+        # 枚举 LHS - Σk_j·x_j 的所有可能
+        breakdown_results = self._enumerate_LHS_breakdown(LHS, i_new)
+        
+        # 递归处理每个 breakdown
+        breakdown_list = []
+        for bd in breakdown_results:
+            bd["i"] = i_new  # 记录新的 i_min
+            
+            # 递归分解
+            bd["breakdown"] = self._breakdown_member(bd, depth + 1, max_depth)
+            breakdown_list.append(bd)
+        
+        return breakdown_list
+
+    def _find_bounded_for_LHS(self, LHS: ArithRef, upper_limit: int) -> Optional[int]:
+        """
+        为给定的 LHS 表达式找到第一个有上界的 x_i（i < upper_limit）。
+        
+        算法：
+        从 i = upper_limit - 1 向下搜索到 i = 1，
+        检查 LHS > M * x_i 是否可满足。
+        如果不可满足（unsat），说明 LHS/x_i 有上界，返回 i。
+        
+        参数:
+            LHS: 当前的左侧表达式
+            upper_limit: 上界（不包含）
+        
+        返回:
+            int: 第一个有上界的 x_i 的索引，若都无界则返回 None
+        """
+        for i in range(upper_limit - 1, 0, -1):
+            xi = self.vars[f"x{i}"]
+            test = LHS > self.M * xi
+            if not self.is_sat(test):
+                return i
+        return None
+
+    def _enumerate_LHS_breakdown(self, LHS: ArithRef, i_min: int) -> List[Dict]:
+        """
+        枚举 LHS - Σk_j·x_j 的所有可能组合（类似 _decompose）。
+        
+        参数:
+            LHS: 当前的左侧表达式
+            i_min: 新的有上界变量索引
+        
+        返回:
+            List[Dict]: breakdown 结果列表
+        """
+        results = []
+        
+        # 变量序列 x_{i_min}, x_{i_min-1}, ..., x_1
+        indices = list(range(i_min, 0, -1))
+        var_names = [f"x{i}" for i in indices]
+        
+        # 对每个变量计算最大 k
+        max_ks = {}
+        for vn in var_names:
+            max_k = self._find_max_k_for_LHS(LHS, vn)
+            if max_k is None or max_k == "MayUnbound":
+                return []  # 无法继续
+            max_ks[vn] = max_k
+        
+        # 枚举所有组合
+        from itertools import product
+        ranges = [range(0, max_ks[vn] + 1) for vn in var_names]
+        
+        for ks in product(*ranges):
+            coeff_map = {var_names[idx]: int(ks[idx]) for idx in range(len(var_names))}
+            
+            # 构造 sum_expr = k_{i_min}*x_{i_min} + ... + k_1*x_1
+            sum_expr = None
+            for vn, k in coeff_map.items():
+                if k == 0:
+                    continue
+                term = self.vars[vn] * k
+                sum_expr = term if sum_expr is None else sum_expr + term
+            
+            if sum_expr is None:
+                from z3 import RealVal
+                sum_expr = RealVal(0)
+            
+            # 新 LHS = 原 LHS - sum_expr
+            new_LHS = LHS - sum_expr
+            
+            # 检查 >= 是否可满足
+            prop_ge = new_LHS >= 0
+            if not self.is_sat(prop_ge):
+                continue
+            
+            # 处理 ">" 和 "=" 两种情况
+            prop_gt = new_LHS > 0
+            if self.is_entailed(prop_gt):
+                results.append({
+                    "coeffs": coeff_map,
+                    "relation": ">",
+                    "entailed": True,
+                    "expr": prop_gt,
+                    "LHS": new_LHS,
+                })
+            elif self.is_sat(prop_gt):
+                results.append({
+                    "coeffs": coeff_map,
+                    "relation": ">",
+                    "entailed": False,
+                    "expr": prop_gt,
+                    "LHS": new_LHS,
+                })
+            
+            prop_eq = new_LHS == 0
+            if self.is_entailed(prop_eq):
+                results.append({
+                    "coeffs": coeff_map,
+                    "relation": "=",
+                    "entailed": True,
+                    "expr": prop_eq,
+                    "LHS": new_LHS,
+                })
+            elif self.is_sat(prop_eq):
+                results.append({
+                    "coeffs": coeff_map,
+                    "relation": "=",
+                    "entailed": False,
+                    "expr": prop_eq,
+                    "LHS": new_LHS,
+                })
+        
+        return results
+
+    def _find_max_k_for_LHS(self, LHS: ArithRef, xi_name: str) -> Union[int, str, None]:
+        """
+        为给定的 LHS 和变量 xi，找到最大的 k 使得 LHS >= k*xi 可满足。
+        
+        参数:
+            LHS: 左侧表达式
+            xi_name: 变量名（如 "x3"）
+        
+        返回:
+            int: 最大的 k
+            "MayUnbound": 可能无界
+            None: solver 不可满足
+        """
+        xi_var = self.vars[xi_name]
+        
+        last_ok = None
+        for k in range(0, self.M + 1):
+            prop = LHS >= k * xi_var
+            if self.is_sat(prop):
+                last_ok = k
+            else:
+                return last_ok
+        
+        return "MayUnbound"
+
+
     # ==================== produce partitions ====================
     # @log_on_error()
     def decompose(self) -> tuple:
@@ -446,6 +954,7 @@ class SMTSolver:
         for i in range(5, 0, -1):
             xi = self.vars[f"x{i}"]
             test = x6 > self.M * xi
+            # True的话表示xi无界，后面就更不可能了
             if self.is_sat(test):
                 return i + 1  # 返回上一个 i，因为当前 i 可满足无界
         return i
@@ -627,6 +1136,281 @@ class SMTSolver:
             groups.insert(0, entailed_group)
         return groups
 
+    def new_classify(self, tree: BreakdownTree) -> List[Dict]:
+        """
+        对 BreakdownTree 进行分类，生成 Partition 列表。
+        
+        算法步骤：
+        1. 将树展平为节点列表 (递归替换：root → children → grandchildren → ...)
+        2. 过滤掉无效节点（i_min==1 且 relation=='>'）
+        3. 按 constraints 进行分组
+        4. constraints=[] 的组（类似 entailed）单独处理
+        5. 为每个组生成 solver，去掉不可满足的
+        6. 返回 [{solver, nodes}, ...] 列表
+        
+        参数:
+            tree: BreakdownTree 对象
+        
+        返回:
+            List[Dict]: 每项为 {"solver": SMTSolver, "nodes": List[BreakdownNode]}
+        """
+        logger = self.get_logger()
+        # logger.setLevel(logging.DEBUG)
+        logger.info(f"Solver {self.id} 开始分类...")
+        
+        # ==================== 步骤 1: 树展平为节点列表 ====================
+        nodes_list = self._flatten_tree(tree)
+        logger.debug(f"展平后节点数: {len(nodes_list)}")
+        for n in nodes_list:
+            logger.debug(f"{n}")
+        logger.debug("-" * 40)
+
+        
+        # ==================== 步骤 2: 过滤无效节点 ====================
+        # 舍弃 i_min==1 且 relation=='>' 的节点
+        valid_nodes = [
+            node for node in nodes_list 
+            if not (node.i_min == 1 and node.relation == ">")
+        ]
+        logger.debug(f"过滤后有效节点数: {len(valid_nodes)}")
+        for n in valid_nodes:
+            logger.debug(f"{n}")
+        logger.debug("-" * 40)
+        
+        # ==================== 步骤 3: 按 constraints 分组 ====================
+        groups = self._group_by_constraints(valid_nodes)
+        logger.debug(f"分组数: {len(groups)}")
+        for idx, group in enumerate(groups):
+            logger.debug(f"组 {idx}: {len(group['nodes'])} 个节点,")
+            logger.debug(f"constraints:")
+            for constraint in group["constraints"]:
+                logger.debug(f"  constraint: {constraint}")
+            logger.debug("nodes:")
+            for n in group["nodes"]:
+                logger.debug(f"  {n}")
+            logger.debug("-" * 40)
+        
+        # ==================== 步骤 4: 处理 constraints=[] 的组 ====================
+        groups = self._handle_empty_constraints_group(groups)
+        for idx, group in enumerate(groups):
+            logger.debug(f"组 {idx}: {len(group['nodes'])} 个节点,")
+            logger.debug(f"constraints:")
+            for constraint in group["constraints"]:
+                logger.debug(f"  constraint: {constraint}")
+            logger.debug("nodes:")
+            for n in group["nodes"]:
+                logger.debug(f"  {n}")
+            logger.debug("-" * 40)
+        
+        # ==================== 步骤 5: 为每组生成 solver ====================
+        partitions = []
+        for group in groups:
+            # constraints = group["constraints"]
+            # nodes = group["nodes"]
+            
+            # 创建 solver
+            group_solver = SMTSolver(
+                base_solver=self,
+                constraints=group["constraints"]
+            )
+            
+            # 检查可满足性
+            # try:
+            if group_solver.check() == sat:
+                partitions.append({
+                    "solver": group_solver,
+                    "constraints": group["constraints"],
+                    "nodes": group["nodes"]
+                })
+        logger.debug(f"分组数: {len(partitions)}")
+            #         logger.debug(f"  组 {idx}: 可满足, {len(nodes)} 个节点")
+            #     else:
+            #         logger.debug(f"  组 {idx}: 不可满足, 跳过")
+            # except Z3UnknownError:
+            #     logger.warning(f"  组 {idx}: solver 返回 unknown, 跳过")
+        for p in partitions:
+            logger.debug(f"Partition with constraints:")
+            for constraint in p['constraints']:
+                logger.debug(f"  constraint: {constraint}")
+            logger.debug(f"Partition with {len(p['nodes'])} nodes:")
+            for n in p['nodes']:
+                logger.debug(f"{n}")
+            logger.debug("-" * 40)
+        logger.critical(f"Solver {self.id} 分类完成: {len(partitions)} 个 Partitions")
+        return partitions
+
+    def _flatten_tree(self, tree: BreakdownTree) -> List[BreakdownNode]:
+        """
+        将树展平为节点列表（递归替换父节点为子节点）。
+        
+        算法：
+        1. 初始化队列：[root]
+        2. 从队列取出节点：
+        - 如果是叶子节点 → 加入结果
+        - 如果有子节点 → 将子节点加入队列（不加入当前节点）
+        3. 重复直到队列为空
+        
+        参数:
+            tree: BreakdownTree 对象
+        
+        返回:
+            List[BreakdownNode]: 所有叶子和中间节点（但父节点被子节点替换）
+        """
+        if tree.root is None:
+            return []
+        
+        result = []
+        queue = [tree.root]
+        
+        while queue:
+            node = queue.pop(0)
+            
+            if node.is_leaf():
+                # 叶子节点：加入结果
+                result.append(node)
+            else:
+                # 非叶子节点：将子节点加入队列（替换父节点）
+                queue.extend(node.children)
+        
+        return result
+
+    def _group_by_constraints(self, nodes: List[BreakdownNode]) -> List[Dict]:
+        """
+        按 constraints 分组（使用逻辑等价性判断）。
+        
+        算法：
+        1. 对每个节点，查找是否存在等价的 constraints 组
+        2. 等价性判断：And(*constraints1) ⟺ And(*constraints2)
+        3. 若找到等价组，加入该组；否则创建新组
+        
+        参数:
+            nodes: 节点列表
+        
+        返回:
+            List[Dict]: 每项为 {"constraints": List[BoolRef], "nodes": List[BreakdownNode]}
+        """
+        groups = []
+        
+        for node in nodes:
+            
+            # 查找等价组
+            found_group = None
+            for group in groups:
+                
+                # 判断等价性
+                if self._are_constraints_equiv(node.constraints, group["constraints"]):
+                    found_group = group
+                    break
+            
+            if found_group:
+                # 加入已有组
+                found_group["nodes"].append(node)
+            else:
+                # 创建新组
+                groups.append({
+                    "constraints": node.constraints,
+                    "nodes": [node]
+                })
+        
+        return groups
+
+    def _are_constraints_equiv(self, constraints1: List[BoolRef], constraints2: List[BoolRef]) -> bool:
+        """
+        判断两个约束列表是否逻辑等价。
+        
+        算法：
+        - 快速路径：长度不同 → 不等价
+        - 快速路径：字符串相同 → 等价
+        - 严格路径：检查 And(*c1) ⟺ And(*c2)
+        
+        参数:
+            constraints1, constraints2: 约束列表
+        
+        返回:
+            bool: 是否等价
+        """
+        # 快速路径：长度不同
+        # if len(constraints1) != len(constraints2):
+        #     return False
+        
+        # 空约束处理
+        if len(constraints1) == 0 or len(constraints2) == 0:
+            if len(constraints1) == len(constraints2):
+                return True
+            else:
+                return False
+        
+        # 快速路径：字符串比较
+        # str1 = sorted(str(simplify(c)) for c in constraints1)
+        # str2 = sorted(str(simplify(c)) for c in constraints2)
+        # if str1 == str2:
+        #     return True
+        
+        # 严格路径：逻辑等价性
+        and1 = And(*constraints1) if len(constraints1) > 1 else constraints1[0]
+        and2 = And(*constraints2) if len(constraints2) > 1 else constraints2[0]
+        
+        return self.are_equiv(and1, and2)
+
+    def _handle_empty_constraints_group(self, groups: List[Dict]) -> List[Dict]:
+        """
+        处理 constraints=[] 的组（类似 entailed）。
+        
+        算法：
+        1. 找到 constraints=[] 的组（entailed 组）
+        2. 计算其 expr = And(Not(c1), Not(c2), ...) 其中 c1, c2 是其他组的 constraints
+        3. 将 entailed 组的节点添加到所有其他组（深拷贝）
+        4. 更新 entailed 组的 constraints 为 [expr]
+        5. 将 entailed 组移到列表首位
+        
+        参数:
+            groups: 分组列表
+        
+        返回:
+            List[Dict]: 处理后的分组列表
+        """
+        # 找到 constraints=[] 的组
+        entailed_group = None
+        satisfiable_groups = []
+        
+        for group in groups:
+            if len(group["constraints"]) == 0:
+                entailed_group = group
+            else:
+                satisfiable_groups.append(group)
+        
+        # 如果没有 entailed 组，直接返回
+        if entailed_group is None:
+            return groups
+        
+        # 如果有 entailed 组
+        if satisfiable_groups:
+            # 构造 entailed_expr = And(Not(c1), Not(c2), ...)
+            other_exprs = []
+            for g in satisfiable_groups:
+                other_exprs.extend(g["constraints"])
+                # if len(g["constraints"]) == 1:
+                #     other_exprs.append(g["constraints"][0])
+                # else:
+                #     other_exprs.append(And(*g["constraints"]))
+            
+            # entailed_expr = And(*[Not(e) for e in other_exprs])
+            
+            # 更新 entailed 组的 constraints
+            entailed_group["constraints"] = [Not(e) for e in other_exprs]
+            
+            # 将 entailed 组的节点添加到所有其他组（深拷贝）
+            # entailed_nodes = deepcopy(entailed_group["nodes"])
+            for g in satisfiable_groups:
+                g["nodes"].extend(deepcopy(entailed_group["nodes"]))
+        # else:
+            # 如果没有其他组，entailed_expr = True
+            # entailed_group["constraints"] = []
+        
+        # 将 entailed 组移到首位
+        result = [entailed_group] + satisfiable_groups
+        return result
+
     def produce_partitions(self, groups: List[Dict]) -> List[Dict]:
         # 为groups添加solver，为构造 Partition 做准备
         for g in groups:
@@ -720,7 +1504,116 @@ class SMTSolver:
         finally:
             self.solver.pop()
            
+    def recursive_classify(self, max_depth: int = 10) -> List[Dict]:
+        """
+        递归分解和分类，直到所有节点的 constraints 都为空。
+        
+        算法流程：
+        1. 初始化：对当前 solver 进行 new_decompose 生成树
+        2. 对树进行 new_classify 得到分类结果
+        3. 对每个分类结果：
+        - 如果该组的所有节点 constraints 都为空 → 加入最终结果
+        - 否则，对该组的 solver 递归调用 recursive_classify
+        4. 返回所有 constraints 为空的分类结果
+        
+        参数:
+            max_depth: 最大递归深度（防止无限递归）
+        
+        返回:
+            List[Dict]: 每项为 {"solver": SMTSolver, "nodes": List[BreakdownNode]}
+                    所有节点的 constraints 都为空
+        """
+        logger = self.get_logger()
+        logger.info("=" * 60)
+        logger.info(f"Solver {self.id} 开始递归分类 (max_depth={max_depth})...")
+        logger.info("=" * 60)
+        
+        # 调用递归辅助函数
+        results = self._recursive_classify_helper(depth=0, max_depth=max_depth)
+        
+        logger.info("=" * 60)
+        logger.critical(f"Solver {self.id} 递归分类完成: {len(results)} 个最终 Partitions")
+        logger.info("=" * 60)
+        
+        return results
 
+    def _recursive_classify_helper(
+        self,
+        depth: int,
+        max_depth: int
+    ) -> List[Dict]:
+        """
+        递归分类的辅助函数。
+        
+        参数:
+            depth: 当前递归深度
+            max_depth: 最大递归深度
+        
+        返回:
+            List[Dict]: constraints 为空的分类结果列表
+        """
+        logger = self.get_logger()
+        indent = "  " * depth
+        
+        logger.info(f"{indent}{'='*40}")
+        logger.info(f"{indent}深度 {depth}: Solver {self.id}")
+        logger.info(f"{indent}{'='*40}")
+        
+        # ==================== 终止条件：达到最大深度 ====================
+        if depth >= max_depth:
+            raise SMTError(f"{indent}达到最大深度 {max_depth}，停止递归")
+            # return []
+        
+        # ==================== 步骤 1: 生成 BreakdownTree ====================
+        logger.info(f"{indent}步骤 1: 生成 BreakdownTree...")
+        tree = self.new_decompose(recursive=True)
+        
+        # ==================== 步骤 2: 分类 ====================
+        logger.info(f"{indent}步骤 2: 分类...")
+        partitions = self.new_classify(tree)
+        
+        logger.info(f"{indent}分类完成: {len(partitions)} 个 Partitions")
+        
+        # ==================== 步骤 3: 处理每个 Partition ====================
+        final_results = []
+        
+        for idx, partition in enumerate(partitions):
+            solver = partition["solver"]
+            nodes = partition["nodes"]
+            constraints = partition["constraints"]
+            
+            logger.info(f"{indent}处理 Partition {idx}: {len(nodes)} 个节点")
+            
+            # 检查所有节点的 constraints 是否为空
+            all_empty = (len(constraints) == 0)
+            # all_empty = all(len(node.constraints) == 0 for node in nodes)
+            
+            if all_empty:
+                # ✅ 所有 constraints 为空 → 加入最终结果
+                logger.info(f"{indent}  ✅ 所有节点 constraints 为空，加入最终结果")
+                final_results.append(partition)
+            else:
+                # ❌ 存在非空 constraints → 递归处理
+                # non_empty_count = sum(1 for node in nodes if len(node.constraints) > 0)
+                # logger.info(f"{indent}  ❌ {non_empty_count}/{len(nodes)} 个节点 constraints 非空，递归处理")
+                
+                # 设置 solver ID（用于日志）
+                solver.set_id(f"{self.id}_d{depth}_p{idx}")
+                
+                # 递归调用
+                sub_results = solver._recursive_classify_helper(
+                    depth=depth + 1,
+                    max_depth=max_depth
+                )
+                
+                # 合并子结果
+                final_results.extend(sub_results)
+                logger.info(f"{indent}  递归返回 {len(sub_results)} 个结果")
+        
+        logger.info(f"{indent}深度 {depth} 完成: {len(final_results)} 个最终结果")
+        logger.info(f"{indent}{'='*40}")
+        
+        return final_results
 
 # ==================== 使用示例 ====================
 

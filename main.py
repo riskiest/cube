@@ -20,27 +20,154 @@ from core import F
 #     # file_level=logging.DEBUG
 # )
 
+def thought():
+    '''
+        此函数无任何实际作用，仅用于记录思考过程和想法
+        [2025.11.30] 目前流程中，仍然存在分解不完全的地方；
+            在solver生成tree的时候，节点的constraints仅作用于这个节点的链条上；
+            因此当节点被分类，flatten的时候，此时group的约束作用于无约束节点的时候，其实关系式可能会变得更加具体；
+            影响：不影响程序的正确性，但对于特别tricky的案例有可能继续不下去
+            现在已经证明这个在tricky案例下进行不下去了；原因会产生很多equ；
+            理论解决方案：在分类后，重新生成BreakdownTree；直到tree不再发生变化；
+
+            新的方案 ：生成新的constraints时，继续生成solver，然后进行decompose和classify，直到不再出现新的约束，也就是tree的所有子节点都是无约束的；
+        [2025.12.01] 不是bug
+    '''
+    pass
+
+
+def new_new_example():
+    """示例：演示完整的处理流程"""
+    setup_logger(
+        name="cube",
+        level=logging.DEBUG,
+        log_to_file=True,
+        console_level=logging.INFO
+    )    
+    # logger = get_logger()
+    logger = setup_constraint_logger('0')
+    try:
+        logger.info("=" * 60)
+        logger.info("示例：Solver → Partitions → 优化 → 新 Solvers")
+        logger.info("=" * 60)
+        
+        # 创建初始 solver
+        solver = SMTSolver(text_constraints=["x6 == 2*x5", "x5 == x4 + x1"])
+        solver.set_id('0')
+        solver.log_assertions()
+            
+        # 检查可满足性
+        ck = solver.check()
+        if ck != sat:
+            logger.error("Solver is unsat.")
+            return
+        
+        opt = Optimizer()
+
+        # solver 生成 partitions
+        # tree = solver.new_decompose()
+        # return
+        # partitions = solver.new_classify(tree)
+        partitions = solver.recursive_classify()
+        # return
+        partitions = [Partition(**p) for p in partitions]
+        logger.info(f"Generated {len(partitions)} partitions from solver")
+
+        # 用partitions生成solver
+        p = partitions[0]
+        p.set_id('2_')
+        p.log_assertions()
+        # p.log_members()
+        p.log_nodes()
+        
+
+        # if p.i_min == 1:
+        #     return
+        
+        n = 1
+        p.calc_n_LHS(n)
+        # opt.process_partition(p, n)
+        
+        opt.new_calc_node(p, n)
+        p.log_LHS(n)
+        results = opt.new_optimize(p, n, method='pulp')
+        # # p.log_structure()
+        # # return
+        
+        # # 优化（先尝试 pulp，失败则尝试 enum）
+        # optimize_results = opt.optimize(p, n, method='pulp')
+        status = results['status']
+        
+        if status == 'optimization_failed':
+            logger.warning("pulp 优化失败，尝试 enum 方法")
+            return
+            # optimize_results = opt.optimize(p, n, method='enum')
+            # status = optimize_results['status']
+
+        if status == 'pruned':
+            return
+        if status == 'success':
+            logger.info("Optimization successful, final solver assertions:")
+            # p.solver.log_assertions()
+            return
+        if status == 'optimization_failed':
+            return
+        if status == 'extend':
+            logger.info("需要扩展，尝试 n=2")
+            # p.calc_n_LHS(2)
+            # optimize_results = opt.optimize(p, 2, method='pulp')
+            return
+        # if status != 'split':
+        #     return
+        
+        constraints = p.new_gen_constraints(results['member_indices_for_zero'], n)
+        filtered_solvers = p.filter(constraints)
+        # logger.info(f"Generated {len(filtered_solvers)} unique solvers")
+    
+    except KeyboardInterrupt:
+        logger.warning("用户中断 (Ctrl+C)")
+        flush_all_handlers()
+        sys.exit(130)
+    except Z3UnknownError as e:
+        logger.error(f"Z3 求解器超时: {e.reason}")
+        logger.debug(f"约束数量: {e.num_constraints}")
+        flush_all_handlers()
+    except Exception:
+        logger.exception("示例函数发生异常")
+        flush_all_handlers()
+    finally:
+        flush_all_handlers()    
+    pass
 
 
 def f_example():
     f = F(n_max=15)
-    lower = [None] * 6
+    lower = [None] * 9
     
-    lower[0] = f.get((1,1), 3)[0]
+    lower[0] = f._sigma((2,))
+    lower[1] = f._sigma((1,1,1))
+    lower[2] = f.get((1,1), 1)[1]
     # lower[0] = f._sigma((1,1,1))+f.get((1,1), 1)[1]
-    lower[1] = f.get((1,), 3)[2]
-    lower[2] = f.get((2,), 3)[0]
-    lower[3] = f.get((1,), 3)[2]
-    lower[4] = f.get(tuple(), 3)[4]
-    lower[5] = f._sigma((2,))
+    lower[3] = f.get((1,), 3)[1]
+    lower[4] = f._sigma((2,2))
+    lower[5] = f.get((2,1), 1)[1]
+    lower[6] = f.get((2,), 1)[2]
+    lower[7] = f.get((1,), 3)[1]
+    lower[8] = f.get(tuple(), 3)[2]
+    
+    
 
-    upper = [None] * 6
-    upper[0] = f.get((1,1), 3)[-1]
-    upper[1] = f.get((1,), 3)[1]
-    upper[2] = f.get((2,), 3)[-1]
-    upper[3] = f.get((1,), 3)[1]
-    upper[4] = f.get(tuple(), 3)[3]
-    upper[5] = f._sigma((2,))
+    upper = [None] * 9
+    upper[0] = f._sigma((2,))
+    upper[1] = f._sigma((1,1,1))
+    upper[2] = f.get((1,1), 1)[0]
+    # lower[0] = f._sigma((1,1,1))+f.get((1,1), 1)[1]
+    upper[3] = f.get((1,), 3)[0]
+    upper[4] = f._sigma((2,2))
+    upper[5] = f.get((2,1), 1)[0]
+    upper[6] = f.get((2,), 1)[1]
+    upper[7] = f.get((1,), 3)[0]
+    upper[8] = f.get(tuple(), 3)[1]
 
     # fs[3] = f._sigma((1, 3))
     # fs[3] = f.evaluator.compute_expression("0.0004_6")  
@@ -57,12 +184,12 @@ def f_example():
     print(f"Sum: {upper_sum}  ({f.formatter.fraction_to_base(upper_sum)})") 
     print("----")
 
-    new1 = f.get((2,1), 1)[0]
-    new2 = f.get((2,1), 1)[1]
+    # new1 = f.get((2,1), 1)[0]
+    # new2 = f.get((2,1), 1)[1]
     # new = f.get((1,1), 1)[1]
     # new =f._sigma((1,1,1))
-    print(f"New F1: {new1}  ({f.formatter.fraction_to_base(new1)})")
-    print(f"New F2: {new2}  ({f.formatter.fraction_to_base(new2)})")
+    # print(f"New F1: {new1}  ({f.formatter.fraction_to_base(new1)})")
+    # print(f"New F2: {new2}  ({f.formatter.fraction_to_base(new2)})")
     print(f.formatter.fraction_to_base(f.theta[6]-Fraction(1,6)))
 
     # K_example = tuple((1,1))
@@ -314,8 +441,13 @@ def process_solver(
     solver.log_assertions()
     
     # 分解生成 partitions
-    groups, i_min = solver.decompose()
-    partitions = [Partition(i_min, **g) for g in groups]
+
+    # tree = solver.new_decompose()
+    # partitions = solver.new_classify(tree)
+    partitions = solver.recursive_classify()
+
+    partitions = [Partition(**p) for p in partitions]
+    slogger.info(f"Generated {len(partitions)} partitions from solver")
     
     # 收集所有成功的 solver
     success_solvers: List[SMTSolver] = []
@@ -329,29 +461,30 @@ def process_solver(
         plogger = p.get_logger()
         
         plogger.critical("-" * 40)
-        plogger.critical(f"Partition [{p_idx+1}/{len(partitions)}] (ID: {partition_id}, i_min={p.i_min})")
+        plogger.critical(f"Partition [{p_idx+1}/{len(partitions)}] (ID: {partition_id})")
         plogger.info("-" * 40)
         p.log_assertions()
-        p.log_members()
+        # p.log_members()
+        p.log_nodes()
 
         # 终止条件 1：i_min == 1（成功！）
-        if p.i_min == 1:
+        # if p.i_min == 1:
             
-            optimize_results = opt.get_f_1(p)
-            status = optimize_results['status']
+        #     optimize_results = opt.get_f_1(p)
+        #     status = optimize_results['status']
 
-            # 根据状态处理
-            if status == 'pruned':
-                plogger.info("✂️ Pruned")
-                continue  # 该 partition 被剪枝，处理下一个
+        #     # 根据状态处理
+        #     if status == 'pruned':
+        #         plogger.info("✂️ Pruned")
+        #         continue  # 该 partition 被剪枝，处理下一个
             
-            elif status == 'success':
-                plogger.info("✅ Success: i_min == 1 and optimization successful")
-                success_solvers.append(p.solver)
-                continue  # 该 partition 成功，处理下一个
+        #     elif status == 'success':
+        #         plogger.info("✅ Success: i_min == 1 and optimization successful")
+        #         success_solvers.append(p.solver)
+        #         continue  # 该 partition 成功，处理下一个
         
         # 尝试不同的 n 值
-        nmax = 3
+        nmax = 2
         for n in range(1, nmax):
             plogger.info("." * 30)
             plogger.info(f"[n={n}] Starting analysis")
@@ -359,12 +492,14 @@ def process_solver(
             
             # 计算 n_LHS
             p.calc_n_LHS(n)
-            opt.process_partition(p, n)
+            # opt.process_partition(p, n)
+            opt.new_calc_node(p, n)
             p.log_LHS(n)
             
             # 优化（先尝试 pulp）
             plogger.info("Optimizing with method=pulp")
-            optimize_results = opt.optimize(p, n, method='pulp')
+            # optimize_results = opt.optimize(p, n, method='pulp')
+            optimize_results = opt.new_optimize(p, n, method='pulp')
             status = optimize_results['status']
             
             # 如果 pulp 失败，尝试 enum
@@ -406,14 +541,15 @@ def process_solver(
                 plogger.critical("🌳 Split: generating new solvers")
                 
                 # 生成约束和新 solvers
-                constraints = p.gen_constraints(optimize_results['member_indices_for_zero'], n)
+                # constraints = p.gen_constraints(optimize_results['member_indices_for_zero'], n)
+                constraints = p.new_gen_constraints(optimize_results['member_indices_for_zero'], n)
                 filtered_solvers = p.filter(constraints)
                 plogger.critical(f"Generated {len(filtered_solvers)} new solvers")
                 # 新增逻辑，如果生成的partition的solver与当前solver相同，则报错
-                for fs in filtered_solvers:
-                    if SMTSolver.are_equivalent(fs, solver):
-                        plogger.error("Generated solver is equivalent to current solver, aborting to prevent infinite loop")
-                        raise ValueError("Generated solver is equivalent to current solver")
+                # for fs in filtered_solvers:
+                #     if SMTSolver.are_equivalent(fs, solver):
+                #         plogger.error("Generated solver is equivalent to current solver, aborting to prevent infinite loop")
+                #         raise ValueError("Generated solver is equivalent to current solver")
                 
                 # 递归处理每个新 solver，收集所有成功的结果
                 for s_idx, new_solver in enumerate(filtered_solvers):
@@ -526,13 +662,26 @@ def solve(
         
         # 6. 输出成功的 solver
         if success_solvers:
-            logger.info(f"\n🎉 Found {len(success_solvers)} valid solution(s):")
+            logger.critical(f"\n🎉 Found {len(success_solvers)} valid solution(s):")
             for idx, solver in enumerate(success_solvers, 1):
-                model = solver.get_model()
-                logger.info(f"  Solution {idx} (ID: {solver.get_id()}):")
-                for var_name in ['x1', 'x2', 'x3', 'x4', 'x5', 'x6']:
-                    value = model.get(var_name)
-                    logger.info(f"    {var_name} = {value}")
+                # 打印solver.assertions()
+                # assertions = solver.get_assertions()
+                """记录所有约束到 solver 专用日志"""
+                logger.critical("=" * 40)
+                try:
+                    logger.critical(f"Solver {type(solver)} Assertions:")
+                except Exception as e:
+                    logger.critical(f"Error logging assertions for solver: {e}")
+                    pass
+                logger.critical("=" * 40)
+                for idx, a in enumerate(solver.assertions(), 1):
+                    logger.critical(f"  [{idx}] {a}")
+                logger.critical("=" * 40)
+                # model = solver.get_model()
+                # logger.info(f"  Solution {idx} (ID: {solver.get_id()}):")
+                # for var_name in ['x1', 'x2', 'x3', 'x4', 'x5', 'x6']:
+                #     value = model.get(var_name)
+                #     logger.info(f"    {var_name} = {value}")
         else:
             logger.warning("⚠️ No valid solutions found")
         
@@ -672,7 +821,7 @@ def main():
     
     # 单个约束组示例
     # text_constraints = ["x6 == 2 * x5", "x5 == x4 + x3"]
-    text_constraints = ["x6 == 2 * x5", "x5 == x4 + x2"]
+    text_constraints = ["x6 == 2*x5"]
     
     result = solve(
         text_constraints=text_constraints,
@@ -798,8 +947,9 @@ def old_main():
 
 
 if __name__ == "__main__":
-    # main()
+    main()
     # batch_main()
     # new_example()
-    f_example()
+    # f_example()
+    # new_new_example()
     # example()
