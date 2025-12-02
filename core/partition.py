@@ -17,7 +17,7 @@ from z3 import BoolRef, ArithRef, And, Not, sat, unsat, simplify
 
 from .smt import SMTSolver
 from .breakdown import BreakdownNode
-from .logger import get_logger, get_sp_logger
+from .logger import close_logger_handlers, get_logger, get_sp_logger
 
 
 class PartitionError(Exception):
@@ -96,6 +96,16 @@ class Partition:
             self._logger = get_logger()
         return self._logger
     
+    def close_logger(self):
+        close_logger_handlers(self.get_logger())
+
+    def __del__(self):
+        """析构时自动清理（可选）"""
+        try:
+            self.close_logger()
+        except:
+            pass
+
     def order(self) -> None:
         """
         按节点的系数字典对 nodes 就地排序。
@@ -233,8 +243,8 @@ class Partition:
             
             node.n_LHS[n] = {"n_lhs": n_lhs, "op": op}
             
-            logger.debug(f"Node LHS={simplify(node.LHS)}: n_LHS[{n}] = ({n_lhs}, {op})")
-        logger.debug("-" * 40)
+            # logger.debug(f"Node LHS={simplify(node.LHS)}: n_LHS[{n}] = ({n_lhs}, {op})")
+        # logger.debug("-" * 40)
     
     def new_gen_constraints(
         self,

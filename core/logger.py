@@ -382,12 +382,12 @@ class ConstraintLoggerGroup:
         self.errors_handler.setFormatter(self.file_format)
         
         # 3. batch_main.log handler（使用相同格式）
-        self.batch_handler = logging.FileHandler(
-            timestamp_dir / "batch_main.log",
-            encoding='utf-8'
-        )
-        self.batch_handler.setLevel(logging.INFO)
-        self.batch_handler.setFormatter(self.file_format)
+        # self.batch_handler = logging.FileHandler(
+        #     timestamp_dir / "batch_main.log",
+        #     encoding='utf-8'
+        # )
+        # self.batch_handler.setLevel(logging.INFO)
+        # self.batch_handler.setFormatter(self.file_format)
         
         # 创建约束级别的 logger
         self.constraint_logger = self._create_constraint_logger()
@@ -402,7 +402,7 @@ class ConstraintLoggerGroup:
         # 添加 handler
         logger.addHandler(self.main_handler)
         logger.addHandler(self.errors_handler)
-        logger.addHandler(self.batch_handler)
+        # logger.addHandler(self.batch_handler)
         
         return logger
     
@@ -537,3 +537,66 @@ def flush_all_handlers():
         logger_obj = logging.getLogger(logger_name)
         for handler in logger_obj.handlers:
             handler.flush()
+
+def close_logger_handlers(logger: logging.Logger):
+    """
+    关闭 logger 的所有 handlers
+    
+    参数:
+        logger: Logger 实例（不是 name）
+    """
+    if logger is None:
+        return
+    
+    for handler in logger.handlers[:]:
+        try:
+            handler.flush()
+            handler.close()
+            logger.removeHandler(handler)
+        except Exception:
+            pass
+
+def setup_batch_logger() -> logging.Logger:
+    """
+    为 batch_solve 设置专用 logger
+    
+    返回:
+        logging.Logger: 配置好的 batch logger
+    """
+    from datetime import datetime
+    from pathlib import Path
+    
+    # 生成 batch 日志目录
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    batch_log_dir = Path("logs") / timestamp
+    batch_log_dir.mkdir(parents=True, exist_ok=True)
+    
+    # 创建 batch logger
+    logger = logging.getLogger("cube.batch")
+    logger.setLevel(logging.DEBUG)
+    logger.handlers.clear()
+    
+    # 控制台 handler
+    console_handler = logging.StreamHandler()
+    console_handler.setLevel(logging.INFO)
+    console_formatter = logging.Formatter('%(levelname)-8s | %(message)s')
+    console_handler.setFormatter(console_formatter)
+    logger.addHandler(console_handler)
+    
+    # 文件 handler
+    file_handler = logging.FileHandler(
+        batch_log_dir / "batch_main.log",
+        mode='a',
+        encoding='utf-8'
+    )
+    file_handler.setLevel(logging.DEBUG)
+    file_formatter = logging.Formatter(
+        '%(asctime)s | %(levelname)-8s | %(message)s',
+        datefmt='%H:%M:%S'
+    )
+    file_handler.setFormatter(file_formatter)
+    logger.addHandler(file_handler)
+    
+    logger.propagate = False
+    
+    return logger        

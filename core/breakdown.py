@@ -332,7 +332,7 @@ class BreakdownTree:
         log = logger if logger is not None else self.logger
         log.info("Root:")
         self._print_node(self.root, indent=1, logger=log)
-        log.info("=" * 40)
+        log.info("-" * 40)
     
     def _print_node(self, node: BreakdownNode, indent: int, logger: logging.Logger) -> None:
         """递归打印节点"""

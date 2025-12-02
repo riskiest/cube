@@ -13,7 +13,7 @@ from z3 import (Solver, BoolRef, ArithRef, sat, unsat, unknown, BoolVal,
                 And, Not, substitute, simplify, Real, Reals, RealVal)
 from copy import deepcopy
 from itertools import product
-from core.logger import get_sp_logger, get_logger
+from core.logger import get_sp_logger, get_logger, close_logger_handlers
 from core.breakdown import BreakdownNode, BreakdownTree
 
 
@@ -86,6 +86,19 @@ class SMTSolver:
             #     logger.error(f"添加 text_constraints 失败: {e}")
             #     raise ValueError(f"SMTSolver 初始化失败：无法添加 text_constraints。错误: {e}")
     
+    @staticmethod
+    def text_to_constraint(text: str) -> BoolRef:
+        """
+        将单个约束字符串转换为 z3 BoolRef。
+        
+        参数:
+            text: 约束字符串
+        
+        返回:
+            BoolRef: 对应的 z3 约束对象
+        """
+        return eval(text, {"__builtins__": {}}, SMTSolver.vars)
+
     @staticmethod
     def constraints_to_id(text_constraints: List[str]) -> str:
         """
@@ -163,6 +176,16 @@ class SMTSolver:
             self._logger = get_logger()
         return self._logger
     
+    def close_logger(self):
+        close_logger_handlers(self.get_logger())
+
+    def __del__(self):
+        """析构时自动清理（可选）"""
+        try:
+            self.close_logger()
+        except:
+            pass
+
     def assertions(self) -> List[BoolRef]:
         """返回当前求解器的所有约束列表"""
         return self.solver.assertions()
@@ -172,10 +195,10 @@ class SMTSolver:
         logger = self.get_logger()
         logger.info("=" * 40)
         logger.info(f"Solver {self.id} Assertions:")
-        logger.info("=" * 40)
+        logger.info("-" * 40)
         for idx, a in enumerate(self.assertions(), 1):
             logger.info(f"  [{idx}] {a}")
-        logger.info("=" * 40)
+        # logger.info("=" * 40)
     
     @staticmethod
     def get_var(name: str) -> Real:
@@ -445,6 +468,7 @@ class SMTSolver:
         """
         logger = self.get_logger()
         logger.info(f"Solver {self.id} 开始分解 (recursive={recursive})...")
+        logger.info('-'*40)
         
         # ✅ 创建虚拟根节点
         root = BreakdownNode.create_root(self.vars["x6"])
@@ -1156,13 +1180,14 @@ class SMTSolver:
         """
         logger = self.get_logger()
         # logger.setLevel(logging.DEBUG)
-        logger.info(f"Solver {self.id} 开始分类...")
+        # logger.info(f"[Step 2] Solver {self.id} 开始分类...")
         
         # ==================== 步骤 1: 树展平为节点列表 ====================
         nodes_list = self._flatten_tree(tree)
-        logger.debug(f"展平后节点数: {len(nodes_list)}")
+        logger.debug(f"[Step 2.1]展平:")
+        logger.debug(f" 展平后节点数: {len(nodes_list)}")
         for n in nodes_list:
-            logger.debug(f"{n}")
+            logger.debug(f"  {n}")
         logger.debug("-" * 40)
 
         
@@ -1172,35 +1197,38 @@ class SMTSolver:
             node for node in nodes_list 
             if not (node.i_min == 1 and node.relation == ">")
         ]
-        logger.debug(f"过滤后有效节点数: {len(valid_nodes)}")
+        logger.debug(f"[Step 2.2]过滤:")
+        logger.debug(f" 过滤后有效节点数: {len(valid_nodes)}")
         for n in valid_nodes:
-            logger.debug(f"{n}")
+            logger.debug(f"  {n}")
         logger.debug("-" * 40)
         
         # ==================== 步骤 3: 按 constraints 分组 ====================
         groups = self._group_by_constraints(valid_nodes)
-        logger.debug(f"分组数: {len(groups)}")
-        for idx, group in enumerate(groups):
-            logger.debug(f"组 {idx}: {len(group['nodes'])} 个节点,")
-            logger.debug(f"constraints:")
-            for constraint in group["constraints"]:
-                logger.debug(f"  constraint: {constraint}")
-            logger.debug("nodes:")
-            for n in group["nodes"]:
-                logger.debug(f"  {n}")
-            logger.debug("-" * 40)
+        # logger.debug(f"分组数: {len(groups)}")
+        # for idx, group in enumerate(groups):
+            # logger.debug(f"组 {idx}: {len(group['nodes'])} 个节点,")
+            # logger.debug(f"constraints:")
+            # for constraint in group["constraints"]:
+            #     logger.debug(f"  constraint: {constraint}")
+            # logger.debug("nodes:")
+            # for n in group["nodes"]:
+            #     logger.debug(f"  {n}")
+            # logger.debug("-" * 40)
         
         # ==================== 步骤 4: 处理 constraints=[] 的组 ====================
         groups = self._handle_empty_constraints_group(groups)
-        for idx, group in enumerate(groups):
-            logger.debug(f"组 {idx}: {len(group['nodes'])} 个节点,")
-            logger.debug(f"constraints:")
-            for constraint in group["constraints"]:
-                logger.debug(f"  constraint: {constraint}")
-            logger.debug("nodes:")
-            for n in group["nodes"]:
-                logger.debug(f"  {n}")
-            logger.debug("-" * 40)
+        
+        # logger.debug(f" 分组数: {len(groups)}")
+        # for idx, group in enumerate(groups):
+        #     logger.debug(f" 组 [{idx}/{len(groups)}]: {len(group['nodes'])} 个节点")
+        #     logger.debug(f"  constraints:")
+        #     for constraint in group["constraints"]:
+        #         logger.debug(f"  {constraint}")
+        #     logger.debug("nodes:")
+        #     for n in group["nodes"]:
+        #         logger.debug(f"  {n}")
+        # logger.debug("-" * 40)
         
         # ==================== 步骤 5: 为每组生成 solver ====================
         partitions = []
@@ -1222,21 +1250,32 @@ class SMTSolver:
                     "constraints": group["constraints"],
                     "nodes": group["nodes"]
                 })
-        logger.debug(f"分组数: {len(partitions)}")
+        logger.debug(f"[Step 2.3]分组: ")
+        logger.debug(f" 分组数: {len(partitions)}")
             #         logger.debug(f"  组 {idx}: 可满足, {len(nodes)} 个节点")
             #     else:
             #         logger.debug(f"  组 {idx}: 不可满足, 跳过")
             # except Z3UnknownError:
             #     logger.warning(f"  组 {idx}: solver 返回 unknown, 跳过")
-        for p in partitions:
-            logger.debug(f"Partition with constraints:")
-            for constraint in p['constraints']:
-                logger.debug(f"  constraint: {constraint}")
-            logger.debug(f"Partition with {len(p['nodes'])} nodes:")
-            for n in p['nodes']:
-                logger.debug(f"{n}")
+        
+        for idx, p in enumerate(partitions, 1):
+            logger.debug(f"组 [{idx}/{len(partitions)}]: {len(p['nodes'])} 个节点")
+            # logger.debug(f"Partition with constraints:")
+            logger.debug(f"constraints:")
+            for constraint in p["constraints"]:
+                logger.debug(f"  {constraint}")
+            logger.debug("nodes:")
+            for n in p["nodes"]:
+                logger.debug(f"  {n}")
+
+            # for constraint in p['constraints']:
+            #     logger.debug(f"  constraint: {constraint}")
+            # logger.debug(f"Partition with {len(p['nodes'])} nodes:")
+            # for n in p['nodes']:
+            #     logger.debug(f"  {n}")
             logger.debug("-" * 40)
-        logger.critical(f"Solver {self.id} 分类完成: {len(partitions)} 个 Partitions")
+        logger.info(f"Solver {self.id} 分类完成: {len(partitions)} 个 Partitions")
+        logger.debug("=" * 60)
         return partitions
 
     def _flatten_tree(self, tree: BreakdownTree) -> List[BreakdownNode]:
@@ -1504,7 +1543,7 @@ class SMTSolver:
         finally:
             self.solver.pop()
            
-    def recursive_classify(self, max_depth: int = 10) -> List[Dict]:
+    def recursive_classify(self, max_depth: int = 30) -> Tuple[List[Dict], int]:
         """
         递归分解和分类，直到所有节点的 constraints 都为空。
         
@@ -1526,22 +1565,24 @@ class SMTSolver:
         logger = self.get_logger()
         logger.info("=" * 60)
         logger.info(f"Solver {self.id} 开始递归分类 (max_depth={max_depth})...")
-        logger.info("=" * 60)
+        # logger.info("=" * 60)
         
         # 调用递归辅助函数
-        results = self._recursive_classify_helper(depth=0, max_depth=max_depth)
+        results, total_generated = self._recursive_classify_helper(depth=0, max_depth=max_depth)
         
         logger.info("=" * 60)
-        logger.critical(f"Solver {self.id} 递归分类完成: {len(results)} 个最终 Partitions")
+        logger.info(f"Solver {self.id} 递归分类完成:")
+        logger.info(f"  总共生成 Partitions: {total_generated} 个")  # ✅ 输出总生成数
+        logger.info(f"  最终返回 Partitions: {len(results)} 个")
         logger.info("=" * 60)
         
-        return results
+        return results, total_generated
 
     def _recursive_classify_helper(
         self,
         depth: int,
         max_depth: int
-    ) -> List[Dict]:
+    ) -> Tuple[List[Dict], int]:
         """
         递归分类的辅助函数。
         
@@ -1553,7 +1594,8 @@ class SMTSolver:
             List[Dict]: constraints 为空的分类结果列表
         """
         logger = self.get_logger()
-        indent = "  " * depth
+        # indent = "  " * depth
+        indent = ''
         
         logger.info(f"{indent}{'='*40}")
         logger.info(f"{indent}深度 {depth}: Solver {self.id}")
@@ -1565,24 +1607,28 @@ class SMTSolver:
             # return []
         
         # ==================== 步骤 1: 生成 BreakdownTree ====================
-        logger.info(f"{indent}步骤 1: 生成 BreakdownTree...")
+        logger.info(f"{indent}[Step 1]: 生成 BreakdownTree...")
         tree = self.new_decompose(recursive=True)
         
         # ==================== 步骤 2: 分类 ====================
-        logger.info(f"{indent}步骤 2: 分类...")
+        logger.info(f"{indent}[Step 2]: Solver {self.id} 按constraints分类nodes...")
         partitions = self.new_classify(tree)
         
-        logger.info(f"{indent}分类完成: {len(partitions)} 个 Partitions")
+        # logger.info(f"{indent}分类完成: {len(partitions)} 个 Partitions")
         
         # ==================== 步骤 3: 处理每个 Partition ====================
+        logger.info(f"{indent}[Step 3]: 递归获取constraints为空的partitions...")
+
         final_results = []
-        
+        total_generated = len(partitions)
+
         for idx, partition in enumerate(partitions):
             solver = partition["solver"]
             nodes = partition["nodes"]
             constraints = partition["constraints"]
             
-            logger.info(f"{indent}处理 Partition {idx}: {len(nodes)} 个节点")
+            # calc_solvers += 1
+            logger.info(f"{indent}处理 Partition[{idx}/{len(partitions)}]:")
             
             # 检查所有节点的 constraints 是否为空
             all_empty = (len(constraints) == 0)
@@ -1590,30 +1636,36 @@ class SMTSolver:
             
             if all_empty:
                 # ✅ 所有 constraints 为空 → 加入最终结果
-                logger.info(f"{indent}  ✅ 所有节点 constraints 为空，加入最终结果")
+                logger.info(f"{indent}  ✅ constraints = [], 加入结果集")
                 final_results.append(partition)
+                logger.info(f"{indent}     共递归生成 0 个结果，返回 1 个最终结果")
             else:
                 # ❌ 存在非空 constraints → 递归处理
                 # non_empty_count = sum(1 for node in nodes if len(node.constraints) > 0)
                 # logger.info(f"{indent}  ❌ {non_empty_count}/{len(nodes)} 个节点 constraints 非空，递归处理")
                 
                 # 设置 solver ID（用于日志）
-                solver.set_id(f"{self.id}_d{depth}_p{idx}")
+                solver.set_id(f"{self.id}_t{idx}")
                 
                 # 递归调用
-                sub_results = solver._recursive_classify_helper(
+                sub_results, sub_generated = solver._recursive_classify_helper(
                     depth=depth + 1,
                     max_depth=max_depth
                 )
                 
                 # 合并子结果
                 final_results.extend(sub_results)
-                logger.info(f"{indent}  递归返回 {len(sub_results)} 个结果")
+                total_generated += sub_generated
+                logger.info(f"{indent}{indent}     共递归生成 {sub_generated} 个结果，返回 {len(sub_results)} 个最终结果")
+                solver.close_logger()
         
-        logger.info(f"{indent}深度 {depth} 完成: {len(final_results)} 个最终结果")
-        logger.info(f"{indent}{'='*40}")
+        logger.info(f"{indent}深度 {depth} 完成: 生成 {total_generated} 个，返回 {len(final_results)} 个最终结果")
+        # logger.info(f"{indent}{'='*40}")
+    
+        # del solver  # 清理递归层的 solver 实例
+        # solver.close_logger()
         
-        return final_results
+        return final_results, total_generated
 
 # ==================== 使用示例 ====================
 
