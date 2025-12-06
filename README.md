@@ -22,16 +22,17 @@
 
 ### 数学表达
 
-> $$
-\max_{X \in \mathbb{X}} \max_{x \in \mathbb{R}^+} f_X(x) \\
-\text{s.t.}\quad
-\begin{cases}
-\mathbb{X} = \left\{ (x_1, x_2, \dots, x_6) \in \mathbb{R}^6 \mid 0 < x_1 < x_2 < \dots < x_6 \right\}, \\[6pt]
-f_X(x) = 
-\begin{cases} 
-0, & x < 0, \\[3pt]
-1, & x = 0, \\[3pt]
-\displaystyle \frac{1}{6} \sum_{i=1}^6 f_X(x - x_i), & x > 0 
+$$
+\max_{X \in \mathbb{X}} \max_{x \in \mathbb{R}^+} f_X(x)
+$$
+
+$$
+\text{s.t.}\quad \begin{cases}
+\mathbb{X} = \left\\{ (x_1, x_2, \dots, x_6) \in \mathbb{R}^6 \mid 0 < x_1 < x_2 < \dots < x_6 \right\\}, \\
+f_X(x) = \begin{cases} 
+0, & x < 0, \\
+1, & x = 0, \\
+\displaystyle\frac{1}{6} \sum_{i=1}^6 f_X(x - x_i), & x > 0 
 \end{cases}
 \end{cases}
 $$
@@ -114,7 +115,7 @@ pip install pulp
 #### 方法 3：从源码安装
 
 ```bash
-git clone https://github.com/yourusername/cube.git
+git clone https://github.com/riskiest/cube.git
 cd cube
 pip install -r requirements.txt
 ```
