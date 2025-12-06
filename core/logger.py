@@ -373,9 +373,9 @@ class ConstraintLoggerGroup:
         self.main_handler.setLevel(logging.DEBUG)
         self.main_handler.setFormatter(self.file_format)
         
-        # 2. errors.log
+        # 2. summary.log
         self.errors_handler = logging.FileHandler(
-            self.constraint_dir / "errors.log",
+            self.constraint_dir / "summary.log",
             encoding='utf-8'
         )
         self.errors_handler.setLevel(logging.ERROR)
@@ -413,7 +413,7 @@ class ConstraintLoggerGroup:
         自动记录到：
         1. SP/{sp_id}_{sp_type}.log（专用日志）
         2. main.log（通过添加 main_handler）
-        3. errors.log（ERROR 及以上，通过 errors_handler）
+        3. summary.log（ERROR 及以上，通过 errors_handler）
         
         参数:
             sp_id: 如 "x6eq2mx5_0_0"
@@ -431,10 +431,10 @@ class ConstraintLoggerGroup:
         logger.handlers.clear()
         logger.propagate = False  # ✅ 不传播，手动控制
         
-        # ✅ 添加 3 个 handler：SP 专用 + main.log + errors.log
+        # ✅ 添加 3 个 handler：SP 专用 + main.log + summary.log
         logger.addHandler(sp_handler)           # SP/{sp_id}_{sp_type}.log
         logger.addHandler(self.main_handler)    # main.log
-        logger.addHandler(self.errors_handler)  # errors.log
+        logger.addHandler(self.errors_handler)  # summary.log
         
         return logger
     
@@ -496,7 +496,7 @@ def setup_constraint_logger(constraint_id: str) -> logging.Logger:
     """
     为约束组设置日志系统。
     
-    返回约束级别的 logger（记录到 main.log + errors.log + batch_main.log）
+    返回约束级别的 logger（记录到 main.log + summary.log + batch_main.log）
     """
     global _current_logger_group
     
@@ -518,7 +518,7 @@ def get_sp_logger(sp_id: str, sp_type: str) -> logging.Logger:
         sp_type: "solver" 或 "partition"
     
     返回:
-        logger（自动记录到 SP 专用日志 + main.log + errors.log）
+        logger（自动记录到 SP 专用日志 + main.log + summary.log）
     """
     if _current_logger_group is None:
         raise ValueError("请先调用 setup_constraint_logger")

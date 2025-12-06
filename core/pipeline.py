@@ -4,8 +4,10 @@ Pipeline 模块：处理从约束到求解的完整流程
 from typing import List, Dict, Optional
 import logging
 import traceback
-from z3 import sat
-import time  # ✅ 在文件顶部添加
+from z3 import sat, And
+import time
+
+from .constants import Constants  # ✅ 在文件顶部添加
 
 from .smt import SMTSolver, Z3UnknownError
 from .partition import Partition
@@ -18,56 +20,19 @@ from .logger import (
     setup_batch_logger
 )
 
-__all__ = ['process_solver', 'solve', 'batch_solve', 'constraint_test']
-
-constraints_to_prove = [
-    # when x6 == 2*x5
-    ["x6 == 2*x5", "x5 == x1 + x1"],
-    ["x6 == 2*x5", "x5 == x1 + x2"],
-    ["x6 == 2*x5", "x5 == x1 + x3"],
-    ["x6 == 2*x5", "x5 == x1 + x4"],    
-    ["x6 == 2*x5", "x5 == x2 + x2"],
-    ["x6 == 2*x5", "x5 == x2 + x3"],
-    ["x6 == 2*x5", "x5 == x2 + x4"],
-    ["x6 == 2*x5", "x5 == x3 + x3"],   
-    ["x6 == 2*x5", "x5 == x3 + x4"],
-    ["x6 == 2*x5", "x5 == x4 + x4"],   
-    # when x6 != x_{1-4} + x_{1-4}
-    ["x6 == x1 + x1"],
-    ["x6 == x1 + x2"],
-    ["x6 == x1 + x3"],
-    ["x6 == x1 + x4"],
-    ["x6 == x2 + x2"],
-    ["x6 == x2 + x3"],
-    ["x6 == x2 + x4"],
-    ["x6 == x3 + x3"],
-    ["x6 == x3 + x4"],
-    ["x6 == x4 + x4"],
-    # when x6 == x5 + x_{1-4}
-    ["x6 == x5 + x1"],
-    ["x6 == x5 + x2"],
-    ["x6 == x5 + x4"],
-    # Specailly, when x6 == x5 + x_3
-    ["x6 == x5 + x3", "x5 == x1 + x1"],
-    ["x6 == x5 + x3", "x5 == x1 + x2"],
-    ["x6 == x5 + x3", "x5 == x1 + x3"],
-    ["x6 == x5 + x3", "x5 == x1 + x4"],    
-    ["x6 == x5 + x3", "x5 == x2 + x2"],
-    ["x6 == x5 + x3", "x5 == x2 + x3"],
-    ["x6 == x5 + x3", "x5 == x2 + x4"],
-    ["x6 == x5 + x3", "x5 == x3 + x3"],   
-    ["x6 == x5 + x3", "x5 == x3 + x4"],
-    ["x6 == x5 + x3", "x5 == x4 + x4"],    
+__all__ = [
+    'prove',                # 处理单个约束组
+    'batch_prove'          # 批量处理多个约束组
 ]
 
-
 def process_solver(
-    solver: SMTSolver,
-    opt: Optimizer,
-    depth: int = 0,
-    max_depth: int = 10,
-    solver_id: str = None
-    ) -> tuple[List[Partition], Dict]:
+        solver: SMTSolver,
+        opt: Optimizer,
+        depth: int,
+        max_depth: int,
+        solver_id: str,
+        breakdown_incompleteness: bool
+        ) -> tuple[List[Partition], Dict]:
     """
     递归处理 solver：分解 → 分类 → 优化 → 生成新 solver
     
@@ -139,7 +104,10 @@ def process_solver(
 
     # tree = solver.new_decompose()
     # partitions = solver.new_classify(tree)
-    partitions, total_generated = solver.recursive_classify()
+    partitions, total_generated = solver.recursive_classify(
+        breakdown_incompleteness=breakdown_incompleteness,
+        max_depth= Constants.MAX_RECURSIVE_CLASSIFY_DEPTH
+    )
 
     partitions = [Partition(**p) for p in partitions]
     # slogger.info(f"Generated {len(partitions)} partitions from solver")
@@ -175,7 +143,7 @@ def process_solver(
         partition_solver_count = 0
 
         # 尝试不同的 n 值
-        nmax = 2
+        nmax = Constants.NMAX_LHS
         for n in range(1, nmax):
             plogger.info("." * 30)
             plogger.info(f"[n={n}] Starting analysis")
@@ -184,7 +152,7 @@ def process_solver(
             # 计算 n_LHS
             p.calc_n_LHS(n)
             # opt.process_partition(p, n)
-            opt.new_calc_node(p, n)
+            opt.new_calc_node(p, n, breakdown_incompleteness)
             p.log_LHS(n)
             
             # 优化（先尝试 pulp）
@@ -196,7 +164,7 @@ def process_solver(
             # 如果 pulp 失败，尝试 enum
             if status == 'optimization_failed':
                 plogger.warning("pulp failed, retrying with method=enum")
-                optimize_results = opt.optimize(p, n, method='enum')
+                optimize_results = opt.new_optimize(p, n, method='enum')
                 status = optimize_results['status']
                 
                 if status == 'optimization_failed':
@@ -225,7 +193,8 @@ def process_solver(
                 else:
                     if n == 1:
                         plogger.critical(f"{p_indent}Will try n=2 next")
-                        continue
+                        raise ValueError("n>1 is not supported in any way")
+                        # continue
                     else:
                         plogger.critical(f"{p_indent}Already at n={n}, cannot extend further")
                         raise ValueError(f"Cannot extend beyond n={n}")
@@ -238,18 +207,12 @@ def process_solver(
                 # constraints = p.gen_constraints(optimize_results['member_indices_for_zero'], n)
                 constraints = p.new_gen_constraints(optimize_results['member_indices_for_zero'], n)
                 filtered_solvers = p.filter(constraints)
-                plogger.critical(f"{p_indent}🌾Generated {len(filtered_solvers)} new solvers")
+                plogger.critical(f"{p_indent}🌾 Generated {len(filtered_solvers)} new solvers")
                 plogger.critical(f"{p_indent}" + "-" * 40)
 
                 # ✅ 记录生成的 solver 数量
                 partition_solver_count = len(filtered_solvers)
                 stats['total_solvers'] += partition_solver_count
-
-                # 新增逻辑，如果生成的partition的solver与当前solver相同，则报错
-                # for fs in filtered_solvers:
-                #     if SMTSolver.are_equivalent(fs, solver):
-                #         plogger.error("Generated solver is equivalent to current solver, aborting to prevent infinite loop")
-                #         raise ValueError("Generated solver is equivalent to current solver")
                 
                 # 递归处理每个新 solver，收集所有成功的结果
                 for s_idx, new_solver in enumerate(filtered_solvers):
@@ -262,8 +225,13 @@ def process_solver(
                     
                     # ✅ 递归调用，获取子统计信息                    
                     sub_success_solvers, sub_stats = process_solver(
-                        new_solver, opt, depth + 1, max_depth, solver_id=new_solver_id
-                    )
+                        new_solver, 
+                        opt, 
+                        depth + 1, 
+                        max_depth=max_depth, 
+                        solver_id=new_solver_id,
+                        breakdown_incompleteness=breakdown_incompleteness
+                    )                    
 
                     # ✅ 累加子统计信息
                     stats['total_partitions'] += sub_stats['total_partitions']
@@ -305,11 +273,9 @@ def process_solver(
 
     return success_solvers, stats
 
-
 def solve(
     text_constraints: List[str],
-    n_max: int = 36,
-    max_depth: int = 10
+    allow_breakdown_incompleteness: bool,
 ) -> Dict:
     """处理单个约束组"""
     # ✅ 记录开始时间
@@ -335,7 +301,6 @@ def solve(
         logger.info("=" * 80)
         logger.info(f"Starting solve_constraints")
         logger.info(f"Constraints: {text_constraints}")
-        logger.info(f"n_max: {n_max}, max_depth: {max_depth}")
         logger.info("=" * 80)
         
         # 1. 初始化 solver
@@ -355,15 +320,30 @@ def solve(
             return result
         
         logger.info("Initial solver is satisfiable")
+
+        if allow_breakdown_incompleteness and (not constraints_satisfiable(initial_solver)):
+            breakdown_incompleteness = True
+            logger.critical("Breakdown_incompleteness enabled.")
+            logger.critical('=' * 60)
+        else:
+            breakdown_incompleteness = False
+            logger.critical("Breakdown_incompleteness disabled.")
+            logger.critical('=' * 60)
+
         
         # 3. 初始化 optimizer
-        opt = Optimizer(n_max=n_max)
-        logger.info(f"Optimizer initialized with n_max={n_max}")
+        opt = Optimizer()
+        logger.info(f"Optimizer initialized:")
         
         # 4. 递归处理，获取统计信息
         logger.info("Starting recursive processing...")
         success_solvers, stats = process_solver(
-            initial_solver, opt, depth=0, max_depth=max_depth, solver_id=solver_id
+            initial_solver, 
+            opt, 
+            depth=0, 
+            max_depth=Constants.PIPELINE_MAX_DEPTH, 
+            solver_id=solver_id,
+            breakdown_incompleteness=breakdown_incompleteness
         )
         
         # 5. 验证每个成功的 solver
@@ -375,7 +355,7 @@ def solve(
             
             for idx, partition in enumerate(success_solvers, 1):
                 logger.critical(f"验证 Solver {getattr(partition, 'id', 'unnamed')} [{idx}/{len(success_solvers)}]...")
-                passed = constraint_test(partition.solver)
+                passed = constraint_entailed(partition.solver)
                 
                 if passed:
                     verified_solvers.append(partition)
@@ -421,20 +401,7 @@ def solve(
             logger.critical(f"\n🎉 Found {len(success_solvers)} valid solution(s):")
             logger.critical(f"✅ Verified {len(verified_solvers)}/{len(success_solvers)} solution(s)")
             logger.critical("-" * 40)
-            
-            # for idx, partition in enumerate(success_solvers, 1):
-            #     logger.critical(f"Success Solver {idx} Assertions:")
-                
-            #     for aidx, a in enumerate(partition.solver.assertions(), 1):
-            #         logger.critical(f"  [{aidx}] {a}")
-                
-            #     # 验证约束
-            #     entailed = constraint_test(partition.solver)
-            #     if not entailed:
-            #         logger.critical(f"❌ Solution {idx} failed constraint test!")
-            #     else:
-            #         logger.critical(f"✅ Solution {idx} passed constraint test!")
-            #     logger.critical("-" * 40)
+
         else:
             logger.warning("⚠️ No valid solutions found")
         
@@ -461,9 +428,8 @@ def solve(
 
 def batch_solve(
     text_constraints_list: List[List[str]],
-    n_max: int = 36,
-    max_depth: int = 10,
-    stop_on_error: bool = False
+    allow_breakdown_incompleteness: bool,
+    stop_on_error: bool
 ) -> List[Dict]:
     """批量处理多个约束组"""
     logger = setup_batch_logger()
@@ -474,7 +440,7 @@ def batch_solve(
     logger.info("=" * 80)
     logger.info(f"🚀 Starting batch_solve_constraints")
     logger.info(f"Total constraint groups: {len(text_constraints_list)}")
-    logger.info(f"Parameters: n_max={n_max}, max_depth={max_depth}, stop_on_error={stop_on_error}")
+    logger.info(f"Parameters: allow_breakdown_incompleteness={allow_breakdown_incompleteness}, stop_on_error={stop_on_error}")
     logger.info("=" * 80)
     
     results = []
@@ -501,7 +467,7 @@ def batch_solve(
         logger.info("=" * 80)
         
         try:
-            result = solve(text_constraints, n_max, max_depth)
+            result = solve(text_constraints, allow_breakdown_incompleteness)
             results.append(result)
 
             # ✅ 累加总运行时间
@@ -703,8 +669,7 @@ def batch_solve(
     
     return results
 
-
-def constraint_test(solver: SMTSolver) -> bool:
+def constraint_entailed(solver: SMTSolver) -> bool:
     """
     验证 solver 是否等价于[1,2,3,4,5,8]
     
@@ -714,73 +679,48 @@ def constraint_test(solver: SMTSolver) -> bool:
     返回:
         bool: 是否满足所有约束
     """
-    text_constraints = [
-        "x6 == 8*x1",
-        "x5 == 5*x1",
-        "x4 == 4*x1",
-        "x3 == 3*x1",
-        "x2 == 2*x1"
-    ]
-    constraints = [SMTSolver.text_to_constraint(tc) for tc in text_constraints]
+    pred_constraints = Constants.Constraints.pred_constraints
+    constraints = [SMTSolver.text_to_constraint(tc) for tc in pred_constraints]
     
     for c in constraints:
         if not solver.is_entailed(c):
             return False
     return True
 
+def constraints_satisfiable(solver: SMTSolver) -> bool:
+    """
+    验证 solver 是否使得[1,2,3,4,5,8]可满足
+    
+    参数:
+        solver: 要验证的 SMTSolver
+    
+    返回:
+        bool: 是否满足所有约束
+    """
+    pred_constraints = Constants.Constraints.pred_constraints
+    constraints = [SMTSolver.text_to_constraint(tc) for tc in pred_constraints]
+    const = And(*constraints)
+    
+    if solver.is_sat(const):
+        return True
+    return False
 
-def prove(text_constraints: List[str]):
-    """主函数：演示单个约束组的处理"""
-    # setup_logger(
-    #     name="cube",
-    #     level=10,  # DEBUG
-    #     log_to_file=True,
-    #     console_level=20  # INFO
-    # )
+def prove(text_constraints: List[str], 
+          allow_breakdown_incompleteness: bool = False):
+    """对单个约束组的证明"""
     
-    # 单个约束组示例
-    # text_constraints = ["x6 == 2 * x5", "x5 == x4 + x3"]
-    # text_constraints = ["x6 == x5 + x1", "x5 == x1 + x1"]
-    
-    result = solve(
+    return solve(
         text_constraints=text_constraints,
-        n_max=36,
-        max_depth=10
-    )
-    
-    flush_all_handlers()
+        allow_breakdown_incompleteness=allow_breakdown_incompleteness
+    )   
 
+def batch_prove(text_constraints_list: List[List[str]], 
+                allow_breakdown_incompleteness: bool = False):
+    """批量处理约束组的证明"""
 
-def batch_prove(text_constraints_list: List[List[str]]):
-    """批量处理示例"""
-    # setup_logger(
-    #     name="cube",
-    #     level=logging.DEBUG,
-    #     log_to_file=True,
-    #     console_level=logging.INFO,
-    #     # file_level=logging.DEBUG
-    # )
-    # print(f"Logger created: {logger}")
-    # print(f"Logger handlers: {logger.handlers}")
-
-    # return
-    # 多个约束组
-    # text_constraints = ["x6 == 2 * x5", "x5 == x4 + x3"]
-    # text_constraints = ["x6 == 2 * x5", "x5 == x4 + x2"]
-
-    # text_constraints_list = [
-    #     ["x6 == 2 * x5", "x5 == x4 + x2"],
-    #     ["x6 == 2 * x5", "x5 == x4 + x3"],
-    #     # ["x6 == x5 + x4"],
-    #     # ["x6 == x5 + x3", "x5 == x3 + x2"],
-    #     # ["x6 >= x5", "x5 >= x4"],
-    # ]
-    
-    results = batch_solve(
+    return batch_solve(
         text_constraints_list=text_constraints_list,
-        n_max=36,
-        max_depth=10,
+        allow_breakdown_incompleteness=allow_breakdown_incompleteness,
         stop_on_error=False  # 遇到错误继续处理
     )
     
-    # flush_all_handlers()

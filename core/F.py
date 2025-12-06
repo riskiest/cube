@@ -3,7 +3,7 @@ from fractions import Fraction
 from math import comb
 from typing import List, Tuple, Union, Dict
 from functools import lru_cache
-from .hex2 import Base6ExprEvaluator, FractionFormatter
+from .hex import Base6ExprEvaluator, FractionFormatter
 
 class F:
     def __init__(self, n_max: int = 10):

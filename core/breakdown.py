@@ -13,9 +13,9 @@ Breakdown 节点和树结构：用于递归分解 LHS 表达式。
 
 from typing import List, Dict, Optional, Tuple, Union
 from z3 import BoolRef, ArithRef, simplify
+from z3 import BoolVal, is_true
 from dataclasses import dataclass, field
 import logging
-# from .smt import SMTSolver  # 假设 SmtSolver 在同一模块中
 
 @dataclass
 class BreakdownNode:
@@ -55,15 +55,9 @@ class BreakdownNode:
     n_LHS: Dict[int, Dict[str, Union[int, str]]] = field(default_factory=dict)
     f_values: Dict = field(default_factory=dict)
     
-    # def __post_init__(self):
-    #     """初始化后处理：确保 constraints 包含自己的 expr"""
-    #     if self.expr not in self.constraints:
-    #         self.constraints = self.constraints + [self.expr]
-    
     def add_child(self, child: 'BreakdownNode') -> None:
         """添加子节点并设置父引用"""
         child.parent = self
-        # child.constraints = self.constraints + [child.expr]
         self.children.append(child)
     
     def is_leaf(self) -> bool:
@@ -134,7 +128,6 @@ class BreakdownNode:
         """可读字符串表示"""
         tmp = f"\u03A3({self.i_min-1})"
         return f"{self.LHS} {self.relation} {0 if self.relation == '=' else tmp}, when {self.constraints}"
-        # return f"BreakdownNode(LHS={simplify(self.LHS)}, relation={self.relation}, i_min={self.i_min}, depth={self.depth()}, children={len(self.children)})"
     
     def __repr__(self) -> str:
         return self.__str__()
@@ -150,30 +143,17 @@ class BreakdownNode:
         返回:
             BreakdownNode: 虚拟根节点
         """
-        from z3 import BoolVal, Reals
-        # x6 = Reals('x6')
+        
         return BreakdownNode(
-            LHS= x6 ,  # 虚拟根的 LHS 为 x6
+            LHS=x6 ,                # 虚拟根的 LHS 为 x6
             coeffs={},              # 空系数
-            relation=">",           # 占位符
-            entailed=False,         # 占位符
+            relation=">",           # 
+            entailed=False,         # 
             expr=BoolVal(True),     # 恒真约束（无约束）
             i_min=6,                # 从 x5 开始搜索
-            # constraints=[],         # 空约束链
-            # children=[],
             parent=None
         )
     
-    def is_virtual_root(self) -> bool:
-        """判断是否为虚拟根节点"""
-        from z3 import is_true
-        return (
-            self.is_root() and 
-            len(self.coeffs) == 0 and 
-            len(self.constraints) == 0 and
-            is_true(self.expr)
-        )
-
 
 class BreakdownTree:
     """
