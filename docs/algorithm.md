@@ -4,7 +4,7 @@
 
 ## 核心代码
 
-程序的关键代码是求约束下的$X$下的值，我们以约束["x6 == 2*x5", "x5 == x3 + x4"]为例
+程序的关键代码是求约束下的 $`X`$ 下的值，我们以约束["x6 == 2*x5", "x5 == x3 + x4"]为例
 
 ### SMTSolver
 
@@ -24,10 +24,10 @@ solver = SMTSolver(text_constraints=["x6 == 2*x5", "x5 == x3 + x4"])，实际输
 
 ### Breakdown
 
-定义LHS=x6，j_min=6, 以x_{j_min-1},...,x_j,...,x1为序，逐个寻找使得LHS/x_j有界的最小的j，记下i_min:=j, i:=i_min-1; 
-注意z3.solver无法判断是否有界，因此我们定义了常数SMT_M=40, 若有LHS>SMT_M * x_j, 我们即认为x_j无界；
+定义LHS=x6，j_min=6, 以 $`x_{j_{\min}-1},...,x_j,...,x_1`$ 为序，逐个寻找使得LHS/ $`x_j`$ 有界的最小的j，记下 $`i_{\min}:=j, i:=i_{\min}-1`$; 
+注意z3.solver无法判断是否有界，因此我们定义了常数SMT_M=40, 若有LHS>SMT_M * $`x_j`$, 我们即认为 $`x_j`$ 无界；
 
-然后对于每个x_j(j>=i_min), 计算最大k_j, 使得 LHS>=k_j * x_j; 然后在 $\prod_{j={i_{\min}}}^{j_{\min}-1} [0, k_j]$的系数空间中，计算LHS-(sum(k_j * x_j))>0或LHS-(sum(k_j * x_j))=0是否被蕴含(entailed)或可满足(satisfiable)；如果被蕴含，说明这条BreakdownNode无需额外约束，而如果是可满足，意味着这条BreakdownNode需要额外的约束，LHS-(sum(k_j * x_j))>0或=0才能被满足，因此我们直接添加LHS-(sum(k_j * x_j))>0或=0为新的约束；
+然后对于每个 $`x_j`$ ($`j\ge i_{\min}`$), 计算最大 $`k_j`$, 使得 $`\text{LHS}\ge k_j \cdot x_j`$; 然后在 $`\prod_{j=i_{\min}}^{j_{\min}-1} [0, k_j]`$ 的系数空间中，计算 $`\text{LHS}-(\sum(k_j \cdot x_j))>0`$ 或 $`\text{LHS}-(\sum(k_j \cdot x_j))=0`$ 是否被蕴含(entailed)或可满足(satisfiable)；如果被蕴含，说明这条BreakdownNode无需额外约束，而如果是可满足，意味着这条BreakdownNode需要额外的约束，$`\text{LHS}-(\sum(k_j \cdot x_j))>0`$ 或 $`=0`$ 才能被满足，因此我们直接添加 $`\text{LHS}-(\sum(k_j \cdot x_j))>0`$ 或 $`=0`$ 为新的约束；
 
 通过上面，我们可获得BreakdownNodes
 
@@ -45,7 +45,6 @@ solver = SMTSolver(text_constraints=["x6 == 2*x5", "x5 == x3 + x4"])，实际输
 对于[3], 知道LHS=x6 - x4\*2 = 2\*x\*3, 可知LHS/x3=2有界，因此Breakdown可以继续进行，定义j_min=i_min, 重新代入上面的过程，分解成BreakdownTree
 
 ```
-
 Root:
   x6 > Σ(5), when []
     > x6 - 0 > Σ(3), when []
@@ -83,13 +82,13 @@ Root:
 
 如果程序全部使用完全分解，在我的电脑上运行时间是58397.61s~16.2h，而如果我们只对[1,2,3,4,5,8]可满足的约束使用完全分解，则程序的运行时间为544.25s~9.1min
 
-### 计算$\theta(X)$
+### 计算 $`\theta(X)`$
 
-F.py提供了BreakdownNode的$\mathcal{F}_{K, i}(n)$-上限的实现；
+F.py提供了BreakdownNode的 $`\mathcal{F}_{K, i}(n)`$-上限的实现；
 
-对partition的所有BreakdownNodes计算，所有的BreakdownNodes都是"LHS=0"的样子，则θ(X)可计算；否则，可以计算BreakdownNodes的上限；lower上限是$\mathcal{F}_{K, i}(n)$，使用它作为计算，会引入新的约束，约束的数量是BreakdownNode的深层属性combo；upper上限是 $\mathcal{F}_{K, i}(n-1)$, 使用它作为上限不会引入新的约束；
+对partition的所有BreakdownNodes计算，所有的BreakdownNodes都是"LHS=0"的样子，则 $`\theta(X)`$ 可计算；否则，可以计算BreakdownNodes的上限；lower上限是 $`\mathcal{F}_{K, i}(n)`$，使用它作为计算，会引入新的约束，约束的数量是BreakdownNode的深层属性combo；upper上限是 $`\mathcal{F}_{K, i}(n-1)`$, 使用它作为上限不会引入新的约束；
 
-$\theta(X)$与基准值$\theta([1,2,3,4,5,8])$进行比较
+$`\theta(X)`$ 与基准值 $`\theta([1,2,3,4,5,8])`$ 进行比较
 
 ```
 θ(X)计算值或上限小于基准值：✂️ Pruned, 剪枝

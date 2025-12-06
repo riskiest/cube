@@ -40,7 +40,7 @@ $$
 显然。■
 
 ## 定理3：
-$`\forall X, \forall x>0 \text{ (fixed)},\exist X' = \{ x_1, \dots, x_6 \in \mathbb{Q}^+ \bigm| \forall \, 1 \leq i \neq j \leq 6,\ x_i \neq x_j \}`$ 
+$`\forall X, \forall x>0 \text{ (fixed)},\exists X' = \{ x_1, \dots, x_6 \in \mathbb{Q}^+ \bigm| \forall \, 1 \leq i \neq j \leq 6,\ x_i \neq x_j \}`$ 
 
 有
 
@@ -95,8 +95,8 @@ $$
 \begin{align*}
 x_{1-i}&=\{x_1,\dots,x_i \} \\
 nx_{1-i}&=\{ \sum_{k=1}^{n}y_k|y_k\in \{x_1,\dots,x_i\} \} \\
-x_6=nx_{1-i} &\Rightarrow \exist x \in nx_{1-i}, x_6 = x \\
-x_6\le nx_{1-i} &\Rightarrow \exist x \in nx_{1-i}, x_6\le x \\
+x_6=nx_{1-i} &\Rightarrow \exists x \in nx_{1-i}, x_6 = x \\
+x_6\le nx_{1-i} &\Rightarrow \exists x \in nx_{1-i}, x_6\le x \\
 x_6\ne nx_{1-i} &\Rightarrow \nexists x \in nx_{1-i}, x_6= x
 \end{align*}
 $$
